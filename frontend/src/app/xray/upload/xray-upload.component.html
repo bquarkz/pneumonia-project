@@ -1,0 +1,49 @@
+<section class="upload-card">
+  <h2>Upload X-rays</h2>
+  <p class="hint">Select up to 10 JPEG images to queue for pneumonia detection.</p>
+
+  <input
+    #fileInput
+    class="file-input"
+    type="file"
+    multiple
+    accept=".jpg,.jpeg,image/jpeg"
+    (change)="onFilesSelected($event)"
+  />
+
+  @if (rejectedFileNames().length > 0) {
+    <p class="rejected-message" role="alert">
+      Skipped (not a JPEG file): {{ rejectedFileNames().join(', ') }}
+    </p>
+  }
+
+  @if (batchLimitMessage()) {
+    <p class="rejected-message" role="alert">{{ batchLimitMessage() }}</p>
+  }
+
+  @if (selectedFiles().length > 0) {
+    <ul class="selected-files">
+      @for (file of selectedFiles(); track file.name) {
+        <li>
+          <span>{{ file.name }}</span>
+          <button type="button" class="remove-button" (click)="removeFile(file.name)" aria-label="Remove {{ file.name }}">
+            &times;
+          </button>
+        </li>
+      }
+    </ul>
+  }
+
+  @if (errorMessage()) {
+    <p class="error-message" role="alert">{{ errorMessage() }}</p>
+  }
+
+  <button
+    type="button"
+    class="submit-button"
+    [disabled]="selectedFiles().length === 0 || isSubmitting()"
+    (click)="submit()"
+  >
+    {{ isSubmitting() ? 'Uploading…' : 'Upload batch' }}
+  </button>
+</section>

@@ -1,0 +1,10 @@
+/**
+ * Template for the production `environment.ts`. `frontend/Dockerfile` renders this into
+ * `src/environments/environment.ts` at build time (before `ng build` runs), substituting the
+ * `BACKEND_PUBLIC_URL` / `KEYCLOAK_PUBLIC_URL` Docker build ARGs that docker-compose.yml
+ * passes in — see environment.ts for the local `ng serve` defaults this replaces.
+ */
+export const environment = {
+  keycloakUrl: '__KEYCLOAK_PUBLIC_URL__',
+  backendUrl: '__BACKEND_PUBLIC_URL__',
+};

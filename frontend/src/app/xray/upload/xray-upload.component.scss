@@ -1,0 +1,81 @@
+.upload-card {
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+  background: #fff;
+}
+
+h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.125rem;
+}
+
+.hint {
+  margin: 0 0 0.75rem;
+  color: #5a6472;
+  font-size: 0.875rem;
+}
+
+.file-input {
+  display: block;
+  margin-bottom: 0.75rem;
+}
+
+.selected-files {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+
+  li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.25rem 0.5rem;
+    background: #f4f6f8;
+    border-radius: 4px;
+    font-size: 0.875rem;
+  }
+}
+
+.remove-button {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  color: #8a94a3;
+
+  &:hover {
+    color: #c0392b;
+  }
+}
+
+.rejected-message,
+.error-message {
+  color: #c0392b;
+  font-size: 0.875rem;
+  margin: 0 0 0.75rem;
+}
+
+.submit-button {
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 1.25rem;
+  background: #2f6feb;
+  color: #fff;
+  font-size: 0.9375rem;
+  cursor: pointer;
+
+  &:disabled {
+    background: #a9b7c9;
+    cursor: not-allowed;
+  }
+
+  &:not(:disabled):hover {
+    background: #2557c4;
+  }
+}

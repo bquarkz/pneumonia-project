@@ -1,0 +1,56 @@
+# Discussion framework (per-user, not shared)
+.claude/discussion/
+
+# Java / Gradle
+.gradle/
+build/
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# Node / Angular
+node_modules/
+dist/
+.angular/
+npm-debug.log*
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ML lab (ml-service) — training data/outputs are local-only, not committed as-is.
+# The final promoted artifact IS meant to be committed later (see ml-service/lab/README.md).
+ml-service/lab/data/*
+!ml-service/lab/data/sample/
+!ml-service/lab/data/features/
+ml-service/lab/artifacts/*
+!ml-service/lab/artifacts/.gitkeep
+ml-service/app/model/artifacts/*
+!ml-service/app/model/artifacts/.gitkeep
+
+# Docker
+*.pid
+/xray-storage/
+
+# Secrets / environment
+.env
+!.env.example
+
+# Logs
+*.log
+
+# IDE
+.idea/
+.junie/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db

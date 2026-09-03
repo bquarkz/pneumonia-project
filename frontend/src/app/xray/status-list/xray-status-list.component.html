@@ -1,0 +1,61 @@
+<section class="status-card">
+  <h2>X-ray requests</h2>
+
+  @if (loadError()) {
+    <p class="error-message" role="alert">{{ loadError() }}</p>
+  }
+
+  @if (requests().length === 0) {
+    <p class="empty-state">No X-ray requests yet. Upload a batch to get started.</p>
+  } @else {
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Filename</th>
+            <th>Status</th>
+            <th>Result</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (request of requests(); track request.id) {
+            <tr>
+              <td>{{ request.originalFilename }}</td>
+              <td>
+                <span class="status-badge" [attr.data-status]="request.status">{{ request.status }}</span>
+              </td>
+              <td>
+                @if (request.status === 'DONE') {
+                  <span
+                    class="result"
+                    [class.positive]="request.resultPneumonia === true"
+                    [class.negative]="request.resultPneumonia === false"
+                  >
+                    {{ request.resultPneumonia ? 'Pneumonia detected' : 'No pneumonia' }}
+                    ({{ formatConfidence(request.resultConfidence) }})
+                  </span>
+                  @if (request.modelVersion) {
+                    <div class="model-version">model: {{ request.modelVersion }}</div>
+                  }
+                }
+              </td>
+              <td>
+                @if (request.status === 'FAILED') {
+                  <button
+                    type="button"
+                    class="retry-button"
+                    [disabled]="retryingIds().has(request.id)"
+                    (click)="retry(request.id)"
+                  >
+                    {{ retryingIds().has(request.id) ? 'Retrying…' : 'Retry' }}
+                  </button>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</section>

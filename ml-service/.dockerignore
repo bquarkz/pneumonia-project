@@ -1,0 +1,7 @@
+# lab/ is the conda-based training environment (notebooks, training data, checkpoints) —
+# it is never part of the served image and can be multi-GB; excluding it keeps every
+# `docker compose build` fast, since compose's build context is this whole directory.
+lab/
+
+**/__pycache__/
+**/.ipynb_checkpoints/

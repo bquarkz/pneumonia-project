@@ -1,0 +1,30 @@
+name: pneumonia-lab
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - jupyterlab
+  - ipywidgets
+  - numpy
+  - pandas
+  - matplotlib
+  - opencv
+  - scikit-image
+  - scikit-learn
+  - pytest
+  - seaborn
+  - shap
+  - numba
+  - xgboost>=3.3
+  - pillow
+  - pyyaml
+  - pytorch
+  - torchvision
+  - cpuonly
+  - pip:
+      - onnx
+      - onnxruntime
+      - onnxscript

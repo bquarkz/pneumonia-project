@@ -1,0 +1,111 @@
+.status-card {
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+  background: #fff;
+}
+
+h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.125rem;
+}
+
+.empty-state {
+  color: #5a6472;
+  font-size: 0.875rem;
+}
+
+.error-message {
+  color: #c0392b;
+  font-size: 0.875rem;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #eceff3;
+  white-space: nowrap;
+}
+
+th {
+  color: #5a6472;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #fff;
+  background: #8a94a3;
+
+  &[data-status='RECEIVED'] {
+    background: #6c7a91;
+  }
+  &[data-status='QUEUED'] {
+    background: #3d7cf4;
+  }
+  &[data-status='PROCESSING'] {
+    background: #9457eb;
+  }
+  &[data-status='RETRYING'] {
+    background: #e08e0b;
+  }
+  &[data-status='DONE'] {
+    background: #1f9d55;
+  }
+  &[data-status='FAILED'] {
+    background: #d0392b;
+  }
+}
+
+.result {
+  &.positive {
+    color: #d0392b;
+    font-weight: 600;
+  }
+  &.negative {
+    color: #1f9d55;
+    font-weight: 600;
+  }
+}
+
+.model-version {
+  color: #8a94a3;
+  font-size: 0.75rem;
+}
+
+.retry-button {
+  border: none;
+  border-radius: 6px;
+  padding: 0.3rem 0.9rem;
+  background: #d0392b;
+  color: #fff;
+  font-size: 0.8125rem;
+  cursor: pointer;
+
+  &:disabled {
+    background: #e6a9a3;
+    cursor: not-allowed;
+  }
+
+  &:not(:disabled):hover {
+    background: #ad2e22;
+  }
+}

@@ -1,0 +1,71 @@
+spring:
+  application:
+    name: backend
+
+  flyway:
+    enabled: true
+
+  rabbitmq:
+    listener:
+      simple:
+        acknowledge-mode: manual
+        concurrency: 1
+        max-concurrency: 1
+
+  servlet:
+    multipart:
+      # Boot's defaults (1MB file / 10MB request) are too small for a *batch* of chest X-ray
+      # JPEGs (routinely 1-5MB each) - the first real multi-file upload would otherwise throw
+      # MaxUploadSizeExceededException at the servlet layer (surfacing as a 500, not the
+      # intentional 400 this module returns for validation failures).
+      max-file-size: 20MB
+      max-request-size: 100MB
+
+server:
+  port: 8081
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health
+  health:
+    readinessstate:
+      enabled: true
+    livenessstate:
+      enabled: true
+
+# Application-specific configuration. Left outside the `spring.*` tree deliberately: these are
+# ours, not Spring Boot relaxed-bound properties.
+#
+# Keycloak, reached by two different callers over two different hostnames: the backend fetches
+# the JWKS over the docker-compose network (issuer-uri), while browser-obtained tokens carry
+# `iss` set to whatever host the browser used (public-issuer-uri). Keycloak dev-mode echoes the
+# request's Host header into `iss`, so these never match and issuer validation needs to target
+# the public one explicitly - see SecurityConfig's JwtDecoder bean.
+keycloak:
+  issuer-uri: ${KEYCLOAK_ISSUER_URI}
+  public-issuer-uri: ${KEYCLOAK_PUBLIC_URL}/realms/pneumonia
+
+xray:
+  storage:
+    dir: ${XRAY_STORAGE_DIR:/data/xrays}
+  ml-service:
+    url: ${ML_SERVICE_URL:http://localhost:8000}
+    connect-timeout-ms: 5000
+    read-timeout-ms: 15000
+
+# The frontend's own origin. Not part of the fixed .env.example contract (that file is owned
+# elsewhere and not to be edited here), so this defaults to the docker-compose-published
+# frontend port and can be overridden via an additional CORS_ALLOWED_ORIGIN env var without
+# requiring any change to the fixed contract files.
+cors:
+  allowed-origin: ${CORS_ALLOWED_ORIGIN:http://localhost:4200}
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] [correlationId=%X{correlationId}] %logger{36} - %msg%n"

@@ -1,0 +1,9 @@
+# ml-service/lab/README.md.
+model_version: null
+trained_from_commit: null
+dataset_version: null
+metrics:
+  auc: null
+  recall: null
+  precision: null
+promoted_at: null

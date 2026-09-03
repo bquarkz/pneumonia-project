@@ -1,0 +1,13 @@
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-multipart==0.0.32
+
+# Inference-only deps (see app/model/inference.py) — no torch/torchvision here on
+# purpose: onnxruntime keeps the served image light (~15MB vs 200MB+ for torch CPU).
+# Version ranges, not exact pins like above, since exact current patch releases
+# weren't verified against PyPI here — resolve and re-pin exactly once, same as
+# the rest of this file's convention.
+onnxruntime>=1.18,<2
+numpy>=1.26,<3
+pillow>=10,<12
+pyyaml>=6,<7

@@ -1,0 +1,42 @@
+# NOTE: src/main/resources/application.yml is NOT layered underneath this file during test
+# runs - Spring resolves the single (first, by classpath order) `classpath:/application.yml`
+# resource, and test-classes precedes classes on the Surefire test classpath, so this file is
+# the *only* application.yml module tests see. Every property main's application.yml would
+# otherwise have supplied (or defaulted), that any bean touched by a module test's component
+# scan actually reads, has to be repeated or re-defaulted here.
+spring:
+  datasource:
+    url: jdbc:h2:mem:pneumonia-test-${random.uuid};MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  # Real schema, not Hibernate-generated: the H2 URL's MODE=PostgreSQL makes the same Flyway
+  # migrations that run against production Postgres apply here too - see V2's own comment for
+  # the one syntax deviation (`USING hash`) that mode doesn't cover.
+  flyway:
+    enabled: true
+
+  rabbitmq:
+    listener:
+      simple:
+        auto-startup: false
+
+xray:
+  storage:
+    dir: ${java.io.tmpdir:/tmp}/pneumonia-xray-test
+  ml-service:
+    url: http://localhost:0
+    connect-timeout-ms: 1000
+    read-timeout-ms: 1000
+
+cors:
+  allowed-origin: http://localhost:4200
+
+# No live Keycloak in this test environment. SecurityConfig's JwtDecoder bean only needs these
+# to be syntactically resolvable at construction time - JWKS fetch against issuer-uri is lazy
+# (happens on first decode()), and no module test sends a request through the security filter
+# chain, so neither URL is ever actually dereferenced.
+keycloak:
+  issuer-uri: http://localhost:0/realms/test
+  public-issuer-uri: http://localhost:0/realms/test
