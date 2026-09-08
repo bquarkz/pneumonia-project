@@ -13,6 +13,7 @@
         <thead>
           <tr>
             <th>Filename</th>
+            <th></th>
             <th>Status</th>
             <th>Result</th>
             <th></th>
@@ -22,6 +23,9 @@
           @for (request of requests(); track request.id) {
             <tr>
               <td>{{ request.originalFilename }}</td>
+              <td>
+                <button type="button" class="view-button" (click)="viewImage(request)">View image</button>
+              </td>
               <td>
                 <span class="status-badge" [attr.data-status]="request.status">{{ request.status }}</span>
               </td>
@@ -61,4 +65,18 @@
       </table>
     </div>
   }
+
+  @if (imageLoadError()) {
+    <p class="error-message" role="alert">{{ imageLoadError() }}</p>
+  }
 </section>
+
+@if (viewingImage(); as image) {
+  <div class="image-modal-backdrop" (click)="closeImage()">
+    <div class="image-modal" (click)="$event.stopPropagation()">
+      <button type="button" class="image-modal-close" (click)="closeImage()" aria-label="Close">&times;</button>
+      <img [src]="image.url" [alt]="image.filename" />
+      <div class="image-modal-caption">{{ image.filename }}</div>
+    </div>
+  </div>
+}

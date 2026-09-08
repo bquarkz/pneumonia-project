@@ -23,6 +23,8 @@ export class XrayStatusListComponent {
   protected readonly requests = signal<XrayRequest[]>([]);
   protected readonly retryingIds = signal<ReadonlySet<string>>(new Set<string>());
   protected readonly loadError = signal<string | null>(null);
+  protected readonly viewingImage = signal<{ url: string; filename: string } | null>(null);
+  protected readonly imageLoadError = signal<string | null>(null);
 
   constructor() {
     this.xrayApi.list().subscribe({
@@ -68,6 +70,35 @@ export class XrayStatusListComponent {
 
   protected formatConfidence(value: number | null): string {
     return value === null ? '—' : `${(value * 100).toFixed(1)}%`;
+  }
+
+  protected viewImage(request: XrayRequest): void {
+    this.imageLoadError.set(null);
+    this.xrayApi.getImage(request.id).subscribe({
+      next: (blob) => {
+        // Revokes whatever URL is currently held (e.g. a second click fired while the first
+        // fetch of a multi-MB JPEG was still in flight, before the modal covers the buttons)
+        // rather than leaking it by overwriting the signal outright.
+        this.revokeCurrentImage();
+        this.viewingImage.set({ url: URL.createObjectURL(blob), filename: request.originalFilename });
+      },
+      error: (error: unknown) => {
+        this.imageLoadError.set(`Could not load image for ${request.originalFilename}.`);
+        console.error(`Failed to load image for request ${request.id}`, error);
+      },
+    });
+  }
+
+  protected closeImage(): void {
+    this.revokeCurrentImage();
+    this.viewingImage.set(null);
+  }
+
+  private revokeCurrentImage(): void {
+    const current = this.viewingImage();
+    if (current) {
+      URL.revokeObjectURL(current.url);
+    }
   }
 
   private setRetrying(id: string, retrying: boolean): void {

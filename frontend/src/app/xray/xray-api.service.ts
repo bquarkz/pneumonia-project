@@ -38,6 +38,11 @@ export class XrayApiService {
     return this.http.post<XrayRequest>(`${this.baseUrl}/${id}/retry`, null);
   }
 
+  /** GET /api/xray-requests/{id}/image — the originally uploaded JPEG, any status. */
+  getImage(id: string): Observable<Blob> {
+    return this.http.get(`${this.baseUrl}/${id}/image`, { responseType: 'blob' });
+  }
+
   /**
    * GET /api/xray-requests/stream — Server-Sent Events. The native `EventSource` API cannot
    * set an `Authorization` header, so the bearer token is passed as the `access_token` query
