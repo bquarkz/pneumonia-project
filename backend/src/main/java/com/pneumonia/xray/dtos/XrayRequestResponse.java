@@ -18,6 +18,7 @@ public record XrayRequestResponse(
 	Boolean resultPneumonia,
 	Double resultConfidence,
 	String modelVersion,
+	String rejectionReason,
 	Instant createdAt) {
 
 	public static XrayRequestResponse from(XrayRequest entity) {
@@ -28,6 +29,7 @@ public record XrayRequestResponse(
 			entity.resultPneumonia(),
 			entity.resultConfidence(),
 			entity.modelVersion(),
+			entity.rejectionReason(),
 			entity.createdAt());
 	}
 }

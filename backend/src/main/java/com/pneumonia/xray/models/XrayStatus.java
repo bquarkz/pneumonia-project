@@ -6,5 +6,6 @@ public enum XrayStatus {
 	PROCESSING,
 	RETRYING,
 	DONE,
-	FAILED
+	FAILED,
+	INVALID
 }

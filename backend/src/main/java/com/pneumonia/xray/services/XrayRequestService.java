@@ -195,6 +195,22 @@ public class XrayRequestService {
 		return repository.findById(id).orElseThrow();
 	}
 
+	/**
+	 * Records the ML service's rejection of the uploaded image as not a chest X-ray and
+	 * transitions PROCESSING -&gt; INVALID. Terminal and non-retryable, unlike {@code FAILED}:
+	 * the same bytes will fail the same content check every time, so neither the retry/
+	 * dead-letter router nor {@link #retry} ever route into or out of this status - it is
+	 * content invalidation, not a technical error.
+	 */
+	@Transactional
+	public XrayRequest applyInvalid(UUID id, String rejectionReason) {
+
+		Instant now = Instant.now();
+		repository.transitionToInvalid(id, rejectionReason, List.of(XrayStatus.PROCESSING), now);
+
+		return repository.findById(id).orElseThrow();
+	}
+
 	private void notifyAllAfterCommit(String userId, List<XrayRequestResponse> responses) {
 		runAfterCommit(() -> responses.forEach(response -> sseNotifier.notify(userId, response)));
 	}

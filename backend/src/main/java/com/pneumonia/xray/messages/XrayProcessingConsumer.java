@@ -7,6 +7,7 @@ import com.pneumonia.xray.models.XrayRequest;
 import com.pneumonia.xray.models.XrayStatus;
 import com.pneumonia.xray.daos.XrayRequestDAO;
 import com.pneumonia.xray.services.MlServiceClient;
+import com.pneumonia.xray.services.NotChestXrayException;
 import com.pneumonia.xray.services.SseNotifier;
 import com.pneumonia.xray.services.XrayRequestService;
 import com.rabbitmq.client.Channel;
@@ -91,6 +92,17 @@ class XrayProcessingConsumer {
 				log.info(
 					"X-ray request {} processed: pneumonia={} confidence={} modelVersion={}",
 					id, prediction.pneumonia(), prediction.confidence(), prediction.modelVersion());
+
+			} catch (NotChestXrayException e) {
+
+				// Content invalidation, not a technical failure: the same bytes will fail this
+				// same check on every future attempt, so this SHALL NOT go through
+				// XrayFailureRouter's retry/dead-letter branch - straight to the terminal,
+				// non-retryable INVALID status instead.
+				log.warn("X-ray request {} rejected as not a chest X-ray: {}", id, e.getMessage());
+
+				XrayRequest invalid = xrayRequestService.applyInvalid(id, e.getMessage());
+				notifyPayload = XrayRequestResponse.from(invalid);
 
 			} catch (Exception e) {
 

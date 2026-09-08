@@ -157,4 +157,40 @@ class XrayModuleTests {
 		assertThat(reloaded.resultConfidence()).isEqualTo(0.87);
 		assertThat(reloaded.modelVersion()).isEqualTo("model-v1");
 	}
+
+	/**
+	 * Proves the content-invalidation path lands on the terminal {@code INVALID} status with
+	 * the ml-service's rejection reason persisted - never {@code RETRYING}/{@code FAILED}, and
+	 * {@code retry_count} left genuinely untouched (not merely still at its default), since this
+	 * transition never originates from a retry attempt. The row is driven through one real
+	 * {@code RETRYING} cycle first (retry_count=1) precisely so this test can tell "left
+	 * untouched" apart from "always zero regardless" / "reset to zero" - a scenario starting
+	 * from a fresh, never-retried row cannot distinguish those.
+	 */
+	@Test
+	void applyingInvalid_transitionsToInvalid_andPersistsRejectionReason_leavingNonZeroRetryCountUntouched() {
+
+		MockMultipartFile jpeg =
+			new MockMultipartFile("files", "not-a-chest.jpg", "image/jpeg", "pretend-jpeg-bytes".getBytes());
+		XrayRequestResponse queued = xrayRequestService.uploadBatch("keycloak-subject-jkl", List.of(jpeg)).get(0);
+
+		xrayRequestService.markProcessing(queued.id());
+		xrayRequestDAO.transitionStatusWithRetryCount(
+			queued.id(), XrayStatus.RETRYING, 1, List.of(XrayStatus.PROCESSING), Instant.now());
+		xrayRequestService.markProcessing(queued.id());
+
+		XrayRequest invalid = xrayRequestService.applyInvalid(
+			queued.id(), "Uploaded image does not look like a chest X-ray (expected a grayscale scan).");
+
+		assertThat(invalid.status()).isEqualTo(XrayStatus.INVALID);
+		assertThat(invalid.rejectionReason())
+			.isEqualTo("Uploaded image does not look like a chest X-ray (expected a grayscale scan).");
+		assertThat(invalid.retryCount()).isEqualTo(1);
+
+		XrayRequest reloaded = xrayRequestDAO.findById(queued.id()).orElseThrow();
+		assertThat(reloaded.status()).isEqualTo(XrayStatus.INVALID);
+		assertThat(reloaded.rejectionReason())
+			.isEqualTo("Uploaded image does not look like a chest X-ray (expected a grayscale scan).");
+		assertThat(reloaded.retryCount()).isEqualTo(1);
+	}
 }

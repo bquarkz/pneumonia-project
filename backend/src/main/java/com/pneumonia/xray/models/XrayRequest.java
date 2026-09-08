@@ -24,6 +24,7 @@ public record XrayRequest(
 		Boolean resultPneumonia,
 		Double resultConfidence,
 		String modelVersion,
+		String rejectionReason,
 	  	Instant createdAt,
 		Instant updatedAt,
 		Instant processedAt) {
@@ -33,6 +34,6 @@ public record XrayRequest(
 	}
 
 	private XrayRequest(UUID id, String userId, String originalFilename, String storagePath, XrayStatus status, Instant now) {
-		this(id, userId, originalFilename, storagePath, status, 0, null, null, null, now, now, null);
+		this(id, userId, originalFilename, storagePath, status, 0, null, null, null, null, now, now, null);
 	}
 }

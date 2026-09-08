@@ -26,6 +26,7 @@ public class XrayRequestDAO extends AbstractDAO {
 		                          result_pneumonia,
 		                          result_confidence,
 		                          model_version,
+		                          rejection_reason,
 		                          created_at,
 		                          updated_at,
 		                          processed_at)
@@ -38,6 +39,7 @@ public class XrayRequestDAO extends AbstractDAO {
 		        :resultPneumonia,
 		        :resultConfidence,
 		        :modelVersion,
+		        :rejectionReason,
 		        :createdAt,
 		        :updatedAt,
 		        :processedAt)
@@ -54,6 +56,7 @@ public class XrayRequestDAO extends AbstractDAO {
 		    result_pneumonia,
 		    result_confidence,
 		    model_version,
+		    rejection_reason,
 		    created_at,
 		    updated_at,
 		    processed_at
@@ -72,6 +75,7 @@ public class XrayRequestDAO extends AbstractDAO {
 		    result_pneumonia,
 		    result_confidence,
 		    model_version,
+		    rejection_reason,
 		    created_at,
 		    updated_at,
 		    processed_at
@@ -91,6 +95,7 @@ public class XrayRequestDAO extends AbstractDAO {
 		    result_pneumonia,
 		    result_confidence,
 		    model_version,
+		    rejection_reason,
 		    created_at,
 		    updated_at,
 		    processed_at
@@ -107,6 +112,13 @@ public class XrayRequestDAO extends AbstractDAO {
 	private static final String TRANSITION_STATUS_WITH_RETRY_COUNT = """
 		UPDATE xray_request SET status = :to,
 		                        retry_count = :retryCount,
+		                        updated_at = :updatedAt
+		 WHERE id = :id AND status IN (:from)
+	""";
+
+	private static final String TRANSITION_TO_INVALID = """
+		UPDATE xray_request SET status = 'INVALID',
+		                        rejection_reason = :rejectionReason,
 		                        updated_at = :updatedAt
 		 WHERE id = :id AND status IN (:from)
 	""";
@@ -130,6 +142,7 @@ public class XrayRequestDAO extends AbstractDAO {
 			rs.getObject("result_pneumonia", Boolean.class),
 			rs.getObject("result_confidence", Double.class),
 			rs.getString("model_version"),
+			rs.getString("rejection_reason"),
 			rs.getTimestamp("created_at").toInstant(),
 			rs.getTimestamp("updated_at").toInstant(),
 			rs.getTimestamp("processed_at") == null ? null : rs.getTimestamp("processed_at").toInstant());
@@ -145,6 +158,7 @@ public class XrayRequestDAO extends AbstractDAO {
 			.addValue("resultPneumonia", request.resultPneumonia())
 			.addValue("resultConfidence", request.resultConfidence())
 			.addValue("modelVersion", request.modelVersion())
+			.addValue("rejectionReason", request.rejectionReason())
 			.addValue("createdAt", Timestamp.from(request.createdAt()))
 			.addValue("updatedAt", Timestamp.from(request.updatedAt()))
 			.addValue("processedAt", request.processedAt() == null ? null : Timestamp.from(request.processedAt()));
@@ -203,6 +217,22 @@ public class XrayRequestDAO extends AbstractDAO {
 			.addValue("id", id)
 			.addValue("from", statusNames(from));
 		return getJdbcTemplate().update(TRANSITION_STATUS_WITH_RETRY_COUNT, params);
+	}
+
+	/**
+	 * Same conditional-transition guarantee as {@link #transitionStatus}, additionally
+	 * persisting the ML service's rejection reason atomically with the transition to
+	 * {@code INVALID}. Unlike {@link #transitionStatusWithRetryCount}, {@code retry_count} is
+	 * left untouched: this transition never originates from - and is never followed by - a
+	 * retry attempt.
+	 */
+	public int transitionToInvalid(UUID id, String rejectionReason, Collection<XrayStatus> from, Instant now) {
+		final var params = new MapSqlParameterSource()
+			.addValue("rejectionReason", rejectionReason)
+			.addValue("updatedAt", Timestamp.from(now))
+			.addValue("id", id)
+			.addValue("from", statusNames(from));
+		return getJdbcTemplate().update(TRANSITION_TO_INVALID, params);
 	}
 
 	/**
