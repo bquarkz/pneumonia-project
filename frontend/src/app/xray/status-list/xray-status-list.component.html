@@ -39,6 +39,9 @@
                     <div class="model-version">model: {{ request.modelVersion }}</div>
                   }
                 }
+                @if (request.status === 'INVALID') {
+                  <span class="result invalid">{{ request.rejectionReason ?? 'Not a chest X-ray' }}</span>
+                }
               </td>
               <td>
                 @if (request.status === 'FAILED') {

@@ -73,6 +73,9 @@ th {
   &[data-status='FAILED'] {
     background: #d0392b;
   }
+  &[data-status='INVALID'] {
+    background: #6c757d;
+  }
 }
 
 .result {
@@ -83,6 +86,10 @@ th {
   &.negative {
     color: #1f9d55;
     font-weight: 600;
+  }
+  &.invalid {
+    color: #5a6472;
+    font-style: italic;
   }
 }
 
