@@ -1,14 +1,15 @@
 # ml-service/lab/README.md.
-model_version: '3'
-trained_from_commit: e0003e2
-dataset_version: '3'
+model_version: '4'
+trained_from_commit: 74d6662
+dataset_version: '4'
 metrics:
-  auc: 0.9422
-  recall: 0.9974
-  precision: 0.7874
+  auc: 0.9574
+  recall: 0.9949
+  precision: 0.8033
 ood:
   max_channel_std: 2.0
   min_grayscale_fraction: 0.95
   k_neighbors: 10
-  knn_distance_threshold: 17.7
-promoted_at: '2026-09-08T15:19:46Z'
+  knn_distance_threshold: 18.6
+  knn_distance_threshold_pretrained: 27.9
+promoted_at: '2026-09-08T17:12:59Z'

@@ -1,7 +1,9 @@
 """Promotes lab/artifacts/model.onnx to serve predictions in ml-service/app/.
 
-Copies the ONNX export (logits + embedding) and the training-set reference embeddings
-(lab/src/ood.py's k-NN out-of-distribution check needs both) and fills in
+Copies the classifier's ONNX export (logits + embedding), the frozen OOD embedding
+extractor's ONNX export (ood_embedding.onnx, ImageNet-pretrained, not fine-tuned), and
+both of their training-set reference embeddings (lab/src/ood.py's two k-NN
+out-of-distribution checks each need their own) and fills in
 app/model/manifest.yaml with the commit, dataset version, the test-set metrics
 recomputed from lab/artifacts/predictions/phase4_test_predictions.csv (the same file
 05_model_comparison.ipynb reads), and the OOD guardrail's config (read from
@@ -35,11 +37,15 @@ from sklearn.metrics import precision_score, recall_score, roc_auc_score
 LAB_DIR = Path(__file__).resolve().parent
 ONNX_SRC = LAB_DIR / "artifacts" / "model.onnx"
 EMBEDDINGS_SRC = LAB_DIR / "artifacts" / "train_embeddings.npy"
+OOD_ONNX_SRC = LAB_DIR / "artifacts" / "ood_embedding.onnx"
+OOD_EMBEDDINGS_SRC = LAB_DIR / "artifacts" / "train_embeddings_pretrained.npy"
 OOD_CONFIG_SRC = LAB_DIR / "artifacts" / "ood_config.json"
 PREDICTIONS_CSV = LAB_DIR / "artifacts" / "predictions" / "phase4_test_predictions.csv"
 APP_MODEL_DIR = LAB_DIR.parent / "app" / "model"
 ONNX_DST = APP_MODEL_DIR / "artifacts" / "model.onnx"
 EMBEDDINGS_DST = APP_MODEL_DIR / "artifacts" / "train_embeddings.npy"
+OOD_ONNX_DST = APP_MODEL_DIR / "artifacts" / "ood_embedding.onnx"
+OOD_EMBEDDINGS_DST = APP_MODEL_DIR / "artifacts" / "train_embeddings_pretrained.npy"
 MANIFEST_PATH = APP_MODEL_DIR / "manifest.yaml"
 MANIFEST_HEADER = "# ml-service/lab/README.md.\n"
 
@@ -89,8 +95,10 @@ def main():
         sys.exit(f"{ONNX_SRC} not found — run lab/src/train.py or 04_dl_cv_transfer_learning.ipynb first.")
     if not EMBEDDINGS_SRC.exists():
         sys.exit(f"{EMBEDDINGS_SRC} not found — run lab/src/train.py first (it's produced alongside model.onnx).")
+    if not OOD_ONNX_SRC.exists() or not OOD_EMBEDDINGS_SRC.exists():
+        sys.exit(f"{OOD_ONNX_SRC} / {OOD_EMBEDDINGS_SRC} not found — run lab/src/train.py first.")
     if not OOD_CONFIG_SRC.exists():
-        sys.exit(f"{OOD_CONFIG_SRC} not found — run 04_dl_cv_transfer_learning.ipynb's OOD calibration cell first.")
+        sys.exit(f"{OOD_CONFIG_SRC} not found — run 04_dl_cv_transfer_learning.ipynb's OOD calibration cells first.")
     if not PREDICTIONS_CSV.exists():
         sys.exit(f"{PREDICTIONS_CSV} not found — run 04_dl_cv_transfer_learning.ipynb's test-evaluation cells first.")
 
@@ -102,6 +110,8 @@ def main():
     ONNX_DST.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ONNX_SRC, ONNX_DST)
     shutil.copy2(EMBEDDINGS_SRC, EMBEDDINGS_DST)
+    shutil.copy2(OOD_ONNX_SRC, OOD_ONNX_DST)
+    shutil.copy2(OOD_EMBEDDINGS_SRC, OOD_EMBEDDINGS_DST)
 
     manifest = {
         "model_version": model_version,
@@ -115,23 +125,29 @@ def main():
 
     onnx_size_mb = ONNX_DST.stat().st_size / (1024 * 1024)
     embeddings_size_mb = EMBEDDINGS_DST.stat().st_size / (1024 * 1024)
+    ood_onnx_size_mb = OOD_ONNX_DST.stat().st_size / (1024 * 1024)
+    ood_embeddings_size_mb = OOD_EMBEDDINGS_DST.stat().st_size / (1024 * 1024)
     print(f"Copied {ONNX_SRC} -> {ONNX_DST} ({onnx_size_mb:.1f} MB)")
     print(f"Copied {EMBEDDINGS_SRC} -> {EMBEDDINGS_DST} ({embeddings_size_mb:.1f} MB)")
+    print(f"Copied {OOD_ONNX_SRC} -> {OOD_ONNX_DST} ({ood_onnx_size_mb:.1f} MB)")
+    print(f"Copied {OOD_EMBEDDINGS_SRC} -> {OOD_EMBEDDINGS_DST} ({ood_embeddings_size_mb:.1f} MB)")
     print(f"Wrote {MANIFEST_PATH}:\n")
     print(yaml.dump(manifest, sort_keys=False))
 
-    if onnx_size_mb > 100:
+    if onnx_size_mb > 100 or ood_onnx_size_mb > 100:
         print(
-            f"WARNING: {ONNX_DST.name} is {onnx_size_mb:.1f} MB (>100 MB) — "
+            f"WARNING: an .onnx file is >100 MB — "
             "see the Git LFS discussion in lab/README.md before committing.",
             file=sys.stderr,
         )
 
     onnx_rel = ONNX_DST.relative_to(LAB_DIR.parent)
     embeddings_rel = EMBEDDINGS_DST.relative_to(LAB_DIR.parent)
+    ood_onnx_rel = OOD_ONNX_DST.relative_to(LAB_DIR.parent)
+    ood_embeddings_rel = OOD_EMBEDDINGS_DST.relative_to(LAB_DIR.parent)
     manifest_rel = MANIFEST_PATH.relative_to(LAB_DIR.parent)
     print("Next step (not run automatically):")
-    print(f"  git add -f {onnx_rel} {embeddings_rel} {manifest_rel}")
+    print(f"  git add -f {onnx_rel} {embeddings_rel} {ood_onnx_rel} {ood_embeddings_rel} {manifest_rel}")
     print('  git commit -m "..."')
 
 

@@ -20,6 +20,8 @@ STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 _ARTIFACTS_DIR = Path(__file__).parent / "artifacts"
 _ONNX_PATH = _ARTIFACTS_DIR / "model.onnx"
 _EMBEDDINGS_PATH = _ARTIFACTS_DIR / "train_embeddings.npy"
+_OOD_ONNX_PATH = _ARTIFACTS_DIR / "ood_embedding.onnx"
+_OOD_EMBEDDINGS_PATH = _ARTIFACTS_DIR / "train_embeddings_pretrained.npy"
 _MANIFEST_PATH = Path(__file__).parent / "manifest.yaml"
 
 # Served when no model has been promoted yet (see ml-service/lab/README.md's "Promoting a
@@ -29,9 +31,13 @@ FALLBACK_VERSION = "fallback-0.0.0"
 # Out-of-distribution guardrail functions — MUST stay in sync with the copy in
 # lab/src/ood.py. Duplicated (not imported) because lab/ (conda env) and this runtime
 # image never share a Python path. Confidence alone doesn't flag OOD inputs: without
-# this, random noise/solid colors turn into a 93-99% confident "pneumonia" prediction
-# (see lab/src/ood.py's docstring). Unlike the functions, the actual threshold values
-# are NOT hardcoded here — Predictor reads them from manifest.yaml's `ood` section,
+# these, random noise/solid colors turn into a 93-99% confident "pneumonia" prediction,
+# and a real abdomen/pelvis X-ray (wrong body part) turns into one too (see
+# lab/src/ood.py's docstring). Three checks run in predict(): grayscale, then k-NN
+# distance in the fine-tuned classifier's own embedding, then k-NN distance again in a
+# separate, frozen ImageNet-pretrained embedding (catches the wrong-body-part case the
+# fine-tuned embedding can't). Unlike the functions, the actual threshold values are
+# NOT hardcoded here — Predictor reads them from manifest.yaml's `ood` section,
 # published by promote.py from lab/artifacts/ood_config.json (see lab/src/ood.py's
 # config_dict()), so the model and its OOD config move together as one contract.
 
@@ -97,6 +103,10 @@ class Predictor:
         self._ref_mean = None
         self._ref_std = None
         self._ref_standardized = None
+        self._ood_session = None
+        self._ood_ref_mean = None
+        self._ood_ref_std = None
+        self._ood_ref_standardized = None
 
         if self.model_version and _ONNX_PATH.exists():
             # No try/except here on purpose: a manifest that claims a promoted model
@@ -117,6 +127,25 @@ class Predictor:
                 _EMBEDDINGS_PATH,
                 self._ood_config,
             )
+
+            # Second, independent OOD check: a frozen ImageNet-pretrained (not
+            # fine-tuned) ResNet18's embedding, which catches a wrong-anatomical-region
+            # X-ray (e.g. abdomen/pelvis) the fine-tuned classifier's embedding above
+            # cannot -- it was never trained to preserve body-region signal. See
+            # lab/src/ood.py's module docstring and 04_dl_cv_transfer_learning.ipynb's
+            # OOD section for how this was found and calibrated.
+            self._ood_session = ort.InferenceSession(str(_OOD_ONNX_PATH), providers=["CPUExecutionProvider"])
+            ood_reference_embeddings = np.load(_OOD_EMBEDDINGS_PATH)
+            self._ood_ref_mean, self._ood_ref_std = _reference_stats(ood_reference_embeddings)
+            self._ood_ref_standardized = _standardize(
+                ood_reference_embeddings, self._ood_ref_mean, self._ood_ref_std
+            )
+            logger.info(
+                "Loaded %d pretrained-embedding reference embeddings for anatomical-region OOD "
+                "check from %s",
+                ood_reference_embeddings.shape[0],
+                _OOD_EMBEDDINGS_PATH,
+            )
         else:
             self.model_version = FALLBACK_VERSION
             logger.warning(
@@ -136,17 +165,31 @@ class Predictor:
                 "Uploaded image does not look like a chest X-ray (expected a grayscale scan)."
             )
 
+        preprocessed = _preprocess(image)
+        k = self._ood_config["k_neighbors"]
+
         input_name = self._session.get_inputs()[0].name
-        logits, embedding = self._session.run(["logits", "embedding"], {input_name: _preprocess(image)})
+        logits, embedding = self._session.run(["logits", "embedding"], {input_name: preprocessed})
 
         threshold = self._ood_config["knn_distance_threshold"]
-        distance = _knn_distance(
-            embedding[0], self._ref_standardized, self._ref_mean, self._ref_std, k=self._ood_config["k_neighbors"]
-        )
+        distance = _knn_distance(embedding[0], self._ref_standardized, self._ref_mean, self._ref_std, k=k)
         if distance > threshold:
             raise NotChestXrayError(
                 f"Uploaded image does not look like a chest X-ray (embedding distance "
                 f"{distance:.1f} exceeds the {threshold:.1f} threshold)."
+            )
+
+        ood_input_name = self._ood_session.get_inputs()[0].name
+        (ood_embedding,) = self._ood_session.run(["embedding"], {ood_input_name: preprocessed})
+
+        pretrained_threshold = self._ood_config["knn_distance_threshold_pretrained"]
+        pretrained_distance = _knn_distance(
+            ood_embedding[0], self._ood_ref_standardized, self._ood_ref_mean, self._ood_ref_std, k=k
+        )
+        if pretrained_distance > pretrained_threshold:
+            raise NotChestXrayError(
+                f"Uploaded image does not look like a chest X-ray (anatomical-region embedding "
+                f"distance {pretrained_distance:.1f} exceeds the {pretrained_threshold:.1f} threshold)."
             )
 
         probability = float(1.0 / (1.0 + np.exp(-logits.ravel()[0])))

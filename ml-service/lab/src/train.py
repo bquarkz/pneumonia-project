@@ -10,6 +10,21 @@ from dataset import IMG_SIZE, PneumoniaXrayDataset
 from model import ResNetWithEmbedding, build_model
 
 
+def compute_pos_weight(dataset):
+    """Ratio of NORMAL to PNEUMONIA images in `dataset` (negative/positive) -- the same
+    imbalance correction 03_ml_modeling.ipynb's M6 (XGBoost) applies via
+    scale_pos_weight, passed here to BCEWithLogitsLoss's pos_weight to counter
+    `train`'s ~2.89:1 skew toward PNEUMONIA. `pos_weight < 1` downweights the
+    (majority) PNEUMONIA class's loss contribution -- the same direction M6's formula
+    produces for this dataset, since PNEUMONIA is the frequent class here, not the
+    rare one scale_pos_weight is more typically used for. Recomputed from whatever
+    `train_dir` is actually passed, not a number copied from Phase 3's own pool."""
+    labels = [label for _, label in dataset.samples]
+    num_pneumonia = sum(labels)
+    num_normal = len(labels) - num_pneumonia
+    return num_normal / num_pneumonia
+
+
 def evaluate(model, loader, device, loss_fn):
     model.eval()
     losses, labels, probs = [], [], []
@@ -29,7 +44,18 @@ def export_artifacts(model, args, device):
     the embeddings of every `train` image (no augmentation, no shuffling) -- the
     reference distribution lab/src/ood.py's k-NN out-of-distribution check compares
     against. Embeddings ride alongside logits in the same ONNX graph/forward pass so
-    the serving app never needs torch to compute them (see app/model/inference.py)."""
+    the serving app never needs torch to compute them (see app/model/inference.py).
+
+    Also exports a second, frozen ImageNet-pretrained (NOT fine-tuned) ResNet18 as a
+    dedicated embedding extractor for a second k-NN check: the fine-tuned model above
+    is optimized only to tell NORMAL from PNEUMONIA, so its embedding compresses away
+    body-region signal it never needed -- e.g. an abdomen/pelvis X-ray lands well
+    inside the "normal chest X-ray" band in that space. The pretrained network never
+    specialized away from ImageNet's general visual features, so it separates
+    different anatomy far better (see 04_dl_cv_transfer_learning.ipynb's OOD section
+    for the calibration numbers). This second export is identical every run (fixed
+    ImageNet weights, no training involved) -- it doesn't depend on args.epochs/lr/etc,
+    only on args.train_dir (to compute its own reference embeddings)."""
     export_model = ResNetWithEmbedding(model).to(device)
     export_model.eval()
 
@@ -49,9 +75,10 @@ def export_artifacts(model, args, device):
         external_data=False,
     )
 
+    embed_loader = DataLoader(PneumoniaXrayDataset(args.train_dir), batch_size=args.batch_size)
+
     embeddings_path = Path(args.embeddings_output)
     embeddings_path.parent.mkdir(parents=True, exist_ok=True)
-    embed_loader = DataLoader(PneumoniaXrayDataset(args.train_dir), batch_size=args.batch_size)
     embeddings = []
     with torch.no_grad():
         for images, _ in embed_loader:
@@ -62,6 +89,38 @@ def export_artifacts(model, args, device):
 
     print(f"ONNX: {onnx_path} (outputs: logits, {embeddings.shape[1]}-dim embedding)")
     print(f"Train embeddings: {embeddings_path} ({embeddings.shape[0]} x {embeddings.shape[1]})")
+
+    ood_embedding_model = ResNetWithEmbedding(build_model(pretrained=True)).to(device)
+    ood_embedding_model.eval()
+
+    ood_embedding_path = Path(args.ood_embedding_output)
+    ood_embedding_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.onnx.export(
+        ood_embedding_model,
+        torch.randn(1, 3, IMG_SIZE, IMG_SIZE, device=device),
+        ood_embedding_path,
+        input_names=["input"],
+        output_names=["logits", "embedding"],
+        dynamic_axes={"input": {0: "batch"}, "logits": {0: "batch"}, "embedding": {0: "batch"}},
+        opset_version=18,
+        external_data=False,
+    )
+
+    pretrained_embeddings_path = Path(args.pretrained_embeddings_output)
+    pretrained_embeddings_path.parent.mkdir(parents=True, exist_ok=True)
+    pretrained_embeddings = []
+    with torch.no_grad():
+        for images, _ in embed_loader:
+            _, batch_embeddings = ood_embedding_model(images.to(device))
+            pretrained_embeddings.append(batch_embeddings.cpu().numpy())
+    pretrained_embeddings = np.concatenate(pretrained_embeddings, axis=0)
+    np.save(pretrained_embeddings_path, pretrained_embeddings)
+
+    print(f"OOD embedding extractor: {ood_embedding_path} (frozen ImageNet ResNet18, embedding only)")
+    print(
+        f"Pretrained-embedding train reference: {pretrained_embeddings_path} "
+        f"({pretrained_embeddings.shape[0]} x {pretrained_embeddings.shape[1]})"
+    )
 
 
 def train(args):
@@ -92,14 +151,15 @@ def train(args):
         print("To serve this model, see 'Promoting a model' in lab/README.md.")
         return
 
-    train_loader = DataLoader(
-        PneumoniaXrayDataset(args.train_dir), batch_size=args.batch_size, shuffle=True
-    )
+    train_dataset = PneumoniaXrayDataset(args.train_dir)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(PneumoniaXrayDataset(args.val_dir), batch_size=args.batch_size)
 
     model = build_model().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    loss_fn = torch.nn.BCEWithLogitsLoss()
+    pos_weight = compute_pos_weight(train_dataset)
+    loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight, device=device))
+    print(f"pos_weight (NORMAL/PNEUMONIA ratio in train): {pos_weight:.4f}")
 
     best_auc = -1.0
 
@@ -143,6 +203,10 @@ def parse_args():
     parser.add_argument("--output", default="../artifacts/model_best.pt")
     parser.add_argument("--onnx-output", default="../artifacts/model.onnx")
     parser.add_argument("--embeddings-output", default="../artifacts/train_embeddings.npy")
+    parser.add_argument("--ood-embedding-output", default="../artifacts/ood_embedding.onnx")
+    parser.add_argument(
+        "--pretrained-embeddings-output", default="../artifacts/train_embeddings_pretrained.npy"
+    )
     parser.add_argument(
         "--checkpoint",
         help="skip training and re-export ONNX/embeddings from this checkpoint instead",
