@@ -25,9 +25,27 @@ _MANIFEST_PATH = Path(__file__).parent / "manifest.yaml"
 # model") — keeps /predict responding with a well-formed result instead of erroring out.
 FALLBACK_VERSION = "fallback-0.0.0"
 
+# Out-of-distribution guardrail — MUST stay in sync with the copy in lab/src/ood.py.
+# Duplicated (not imported) because lab/ (conda env) and this runtime image never share a
+# Python path. Confidence alone doesn't flag OOD inputs: without this, random noise/solid
+# colors turn into a 93-99% confident "pneumonia" prediction (see lab/src/ood.py's docstring).
+MAX_CHANNEL_STD = 2.0
+MIN_GRAYSCALE_FRACTION = 0.95
 
-def _preprocess(image_bytes: bytes) -> np.ndarray:
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB").resize((IMG_SIZE, IMG_SIZE))
+
+class NotChestXrayError(ValueError):
+    """Raised when an uploaded image fails the out-of-distribution guardrail."""
+
+
+def _is_grayscale_like(image: Image.Image) -> bool:
+    array = np.asarray(image.convert("RGB"), dtype=np.float32)
+    per_pixel_channel_std = array.std(axis=2)
+    grayscale_fraction = (per_pixel_channel_std <= MAX_CHANNEL_STD).mean()
+    return bool(grayscale_fraction >= MIN_GRAYSCALE_FRACTION)
+
+
+def _preprocess(image: Image.Image) -> np.ndarray:
+    image = image.resize((IMG_SIZE, IMG_SIZE))
     array = (np.asarray(image, dtype=np.float32) / 255.0 - MEAN) / STD
     return array.transpose(2, 0, 1)[np.newaxis, ...]  # NCHW, batch of 1
 
@@ -64,11 +82,17 @@ class Predictor:
             )
 
     def predict(self, image_bytes: bytes) -> tuple[bool, float]:
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        if not _is_grayscale_like(image):
+            raise NotChestXrayError(
+                "Uploaded image does not look like a chest X-ray (expected a grayscale scan)."
+            )
+
         if self._session is None:
             return _fallback_predict(image_bytes)
 
         input_name = self._session.get_inputs()[0].name
-        logits = self._session.run(None, {input_name: _preprocess(image_bytes)})[0]
+        logits = self._session.run(None, {input_name: _preprocess(image)})[0]
         probability = float(1.0 / (1.0 + np.exp(-logits.ravel()[0])))
         pneumonia = probability > 0.5
         return pneumonia, round(probability if pneumonia else 1 - probability, 4)

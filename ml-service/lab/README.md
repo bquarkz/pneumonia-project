@@ -23,6 +23,9 @@ lab/
     dataset.py         # PneumoniaXrayDataset (expects <dir>/NORMAL, <dir>/PNEUMONIA)
     model.py            # ResNet18 (transfer learning), output: 1 logit = P(pneumonia)
     train.py             # training script + ONNX export
+    features.py          # 12 hand-engineered features for 01/03 (+ test_features.py)
+    ood.py                # grayscale OOD guardrail — copy kept in sync in app/model/inference.py
+                          # (+ test_ood.py)
   data/
     sample/               # tiny fixture (2 images/split), committed — used by
                           # src/test_features.py, not the training pipeline. Full dataset

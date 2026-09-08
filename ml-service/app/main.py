@@ -8,9 +8,9 @@ app/model/inference.py.
 
 import logging
 
-from fastapi import FastAPI, File, Header, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 
-from .model.inference import Predictor
+from .model.inference import NotChestXrayError, Predictor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ml-service")
@@ -30,7 +30,17 @@ async def predict(
     x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
 ) -> dict:
     contents = await file.read()
-    pneumonia, confidence = predictor.predict(contents)
+    try:
+        pneumonia, confidence = predictor.predict(contents)
+    except NotChestXrayError as exc:
+        logger.warning(
+            "correlation_id=%s filename=%s size=%d -> rejected: %s",
+            x_correlation_id,
+            file.filename,
+            len(contents),
+            exc,
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     logger.info(
         "correlation_id=%s filename=%s size=%d -> pneumonia=%s confidence=%s model_version=%s",
