@@ -1,12 +1,13 @@
 import argparse
 from pathlib import Path
 
+import numpy as np
 import torch
 from sklearn.metrics import roc_auc_score
 from torch.utils.data import DataLoader
 
 from dataset import IMG_SIZE, PneumoniaXrayDataset
-from model import build_model
+from model import ResNetWithEmbedding, build_model
 
 
 def evaluate(model, loader, device, loss_fn):
@@ -23,6 +24,46 @@ def evaluate(model, loader, device, loss_fn):
     return sum(losses) / len(losses), auc
 
 
+def export_artifacts(model, args, device):
+    """Exports the trained model to ONNX (logits + 512-dim embedding) and, separately,
+    the embeddings of every `train` image (no augmentation, no shuffling) -- the
+    reference distribution lab/src/ood.py's k-NN out-of-distribution check compares
+    against. Embeddings ride alongside logits in the same ONNX graph/forward pass so
+    the serving app never needs torch to compute them (see app/model/inference.py)."""
+    export_model = ResNetWithEmbedding(model).to(device)
+    export_model.eval()
+
+    onnx_path = Path(args.onnx_output)
+    onnx_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.onnx.export(
+        export_model,
+        torch.randn(1, 3, IMG_SIZE, IMG_SIZE, device=device),
+        onnx_path,
+        input_names=["input"],
+        output_names=["logits", "embedding"],
+        dynamic_axes={"input": {0: "batch"}, "logits": {0: "batch"}, "embedding": {0: "batch"}},
+        # torch>=2.9's dynamo-based exporter can't go as low as opset 17 (silently
+        # falls back to 18 anyway) and, unless told otherwise, writes weights to a
+        # separate model.onnx.data file — inference.py only loads model.onnx.
+        opset_version=18,
+        external_data=False,
+    )
+
+    embeddings_path = Path(args.embeddings_output)
+    embeddings_path.parent.mkdir(parents=True, exist_ok=True)
+    embed_loader = DataLoader(PneumoniaXrayDataset(args.train_dir), batch_size=args.batch_size)
+    embeddings = []
+    with torch.no_grad():
+        for images, _ in embed_loader:
+            _, batch_embeddings = export_model(images.to(device))
+            embeddings.append(batch_embeddings.cpu().numpy())
+    embeddings = np.concatenate(embeddings, axis=0)
+    np.save(embeddings_path, embeddings)
+
+    print(f"ONNX: {onnx_path} (outputs: logits, {embeddings.shape[1]}-dim embedding)")
+    print(f"Train embeddings: {embeddings_path} ({embeddings.shape[0]} x {embeddings.shape[1]})")
+
+
 def train(args):
     if torch.cuda.is_available():
         # Also covers AMD GPUs on a ROCm-built PyTorch — ROCm reuses the "cuda" API/device string.
@@ -36,6 +77,21 @@ def train(args):
 
     print(f"Training on: {device}")
 
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Skips training and re-exports ONNX/embeddings from an already-trained checkpoint --
+    # e.g. after changing export_artifacts, when the trained weights themselves don't
+    # need to change and a full (non-deterministic, ~10 min) retrain would be wasted.
+    if getattr(args, "checkpoint", None):
+        model = build_model(pretrained=False).to(device)
+        model.load_state_dict(torch.load(args.checkpoint, map_location=device))
+        model.eval()
+        export_artifacts(model, args, device)
+        print(f"\nRe-exported from checkpoint: {args.checkpoint}")
+        print("To serve this model, see 'Promoting a model' in lab/README.md.")
+        return
+
     train_loader = DataLoader(
         PneumoniaXrayDataset(args.train_dir), batch_size=args.batch_size, shuffle=True
     )
@@ -45,8 +101,6 @@ def train(args):
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     loss_fn = torch.nn.BCEWithLogitsLoss()
 
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     best_auc = -1.0
 
     for epoch in range(1, args.epochs + 1):
@@ -73,23 +127,9 @@ def train(args):
     model.load_state_dict(torch.load(output_path, map_location=device))
     model.eval()
 
-    onnx_path = Path(args.onnx_output)
-    onnx_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.onnx.export(
-        model,
-        torch.randn(1, 3, IMG_SIZE, IMG_SIZE, device=device),
-        onnx_path,
-        input_names=["input"],
-        output_names=["logits"],
-        dynamic_axes={"input": {0: "batch"}, "logits": {0: "batch"}},
-        # torch>=2.9's dynamo-based exporter can't go as low as opset 17 (silently
-        # falls back to 18 anyway) and, unless told otherwise, writes weights to a
-        # separate model.onnx.data file — inference.py only loads model.onnx.
-        opset_version=18,
-        external_data=False,
-    )
+    export_artifacts(model, args, device)
 
-    print(f"\nBest val_auc={best_auc:.4f}. Checkpoint: {output_path}. ONNX: {onnx_path}")
+    print(f"\nBest val_auc={best_auc:.4f}. Checkpoint: {output_path}.")
     print("To serve this model, see 'Promoting a model' in lab/README.md.")
 
 
@@ -102,6 +142,11 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--output", default="../artifacts/model_best.pt")
     parser.add_argument("--onnx-output", default="../artifacts/model.onnx")
+    parser.add_argument("--embeddings-output", default="../artifacts/train_embeddings.npy")
+    parser.add_argument(
+        "--checkpoint",
+        help="skip training and re-export ONNX/embeddings from this checkpoint instead",
+    )
     return parser.parse_args()
 
 

@@ -19,6 +19,7 @@ STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 _ARTIFACTS_DIR = Path(__file__).parent / "artifacts"
 _ONNX_PATH = _ARTIFACTS_DIR / "model.onnx"
+_EMBEDDINGS_PATH = _ARTIFACTS_DIR / "train_embeddings.npy"
 _MANIFEST_PATH = Path(__file__).parent / "manifest.yaml"
 
 # Served when no model has been promoted yet (see ml-service/lab/README.md's "Promoting a
@@ -31,6 +32,8 @@ FALLBACK_VERSION = "fallback-0.0.0"
 # colors turn into a 93-99% confident "pneumonia" prediction (see lab/src/ood.py's docstring).
 MAX_CHANNEL_STD = 2.0
 MIN_GRAYSCALE_FRACTION = 0.95
+K_NEIGHBORS = 10
+KNN_DISTANCE_THRESHOLD = 20.0
 
 
 class NotChestXrayError(ValueError):
@@ -42,6 +45,29 @@ def _is_grayscale_like(image: Image.Image) -> bool:
     per_pixel_channel_std = array.std(axis=2)
     grayscale_fraction = (per_pixel_channel_std <= MAX_CHANNEL_STD).mean()
     return bool(grayscale_fraction >= MIN_GRAYSCALE_FRACTION)
+
+
+def _reference_stats(reference_embeddings: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    mean = reference_embeddings.mean(axis=0)
+    std = reference_embeddings.std(axis=0) + 1e-6
+    return mean, std
+
+
+def _standardize(embeddings: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
+    return (embeddings - mean) / std
+
+
+def _knn_distance(
+    query_embedding: np.ndarray,
+    reference_embeddings_standardized: np.ndarray,
+    mean: np.ndarray,
+    std: np.ndarray,
+    k: int = K_NEIGHBORS,
+) -> float:
+    query_standardized = _standardize(query_embedding, mean, std)
+    distances = np.linalg.norm(reference_embeddings_standardized - query_standardized[None, :], axis=1)
+    distances.sort()
+    return float(distances[:k].mean())
 
 
 def _preprocess(image: Image.Image) -> np.ndarray:
@@ -67,13 +93,25 @@ class Predictor:
 
         self.model_version = manifest.get("model_version")
         self._session = None
+        self._ref_mean = None
+        self._ref_std = None
+        self._ref_standardized = None
 
         if self.model_version and _ONNX_PATH.exists():
             # No try/except here on purpose: a manifest that claims a promoted model
-            # but fails to load (corrupt file, opset mismatch) SHALL crash startup
-            # loudly, not silently degrade to fallback predictions.
+            # but fails to load (corrupt file, opset mismatch, missing embeddings) SHALL
+            # crash startup loudly, not silently degrade to fallback predictions.
             self._session = ort.InferenceSession(str(_ONNX_PATH), providers=["CPUExecutionProvider"])
             logger.info("Loaded model version=%s from %s", self.model_version, _ONNX_PATH)
+
+            reference_embeddings = np.load(_EMBEDDINGS_PATH)
+            self._ref_mean, self._ref_std = _reference_stats(reference_embeddings)
+            self._ref_standardized = _standardize(reference_embeddings, self._ref_mean, self._ref_std)
+            logger.info(
+                "Loaded %d reference embeddings for k-NN OOD check from %s",
+                reference_embeddings.shape[0],
+                _EMBEDDINGS_PATH,
+            )
         else:
             self.model_version = FALLBACK_VERSION
             logger.warning(
@@ -92,7 +130,15 @@ class Predictor:
             return _fallback_predict(image_bytes)
 
         input_name = self._session.get_inputs()[0].name
-        logits = self._session.run(None, {input_name: _preprocess(image)})[0]
+        logits, embedding = self._session.run(["logits", "embedding"], {input_name: _preprocess(image)})
+
+        distance = _knn_distance(embedding[0], self._ref_standardized, self._ref_mean, self._ref_std)
+        if distance > KNN_DISTANCE_THRESHOLD:
+            raise NotChestXrayError(
+                f"Uploaded image does not look like a chest X-ray (embedding distance "
+                f"{distance:.1f} exceeds the {KNN_DISTANCE_THRESHOLD:.1f} threshold)."
+            )
+
         probability = float(1.0 / (1.0 + np.exp(-logits.ravel()[0])))
         pneumonia = probability > 0.5
         return pneumonia, round(probability if pneumonia else 1 - probability, 4)
