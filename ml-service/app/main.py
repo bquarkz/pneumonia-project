@@ -1,9 +1,9 @@
 """Pneumonia X-ray prediction service.
 
-Serves whatever model is promoted to app/model/artifacts/model.onnx (see
-app/model/manifest.yaml). Until a real model is promoted, Predictor falls back to a
-deterministic pseudo-random stand-in so the pipeline is fully exercisable end-to-end
-(see DEC-0001's known gap on the ML model architecture, and ml-service/lab/ for training).
+Serves the model promoted to app/model/artifacts/model.onnx (see app/model/manifest.yaml
+and ml-service/lab/README.md's "Promoting a model"). If no model has been promoted yet,
+Predictor falls back to a deterministic stand-in so /predict keeps responding — see
+app/model/inference.py.
 """
 
 import logging
