@@ -2,10 +2,14 @@
 
 Copies the ONNX export (logits + embedding) and the training-set reference embeddings
 (lab/src/ood.py's k-NN out-of-distribution check needs both) and fills in
-app/model/manifest.yaml with the commit, dataset version, and the test-set metrics
+app/model/manifest.yaml with the commit, dataset version, the test-set metrics
 recomputed from lab/artifacts/predictions/phase4_test_predictions.csv (the same file
-05_model_comparison.ipynb reads) — so the manifest always reflects the predictions
-actually saved on disk, not numbers copy-pasted from a notebook's printed output.
+05_model_comparison.ipynb reads), and the OOD guardrail's config (read from
+lab/artifacts/ood_config.json, written by 04_dl_cv_transfer_learning.ipynb's
+calibration cell) — so app/model/inference.py can read its grayscale/k-NN parameters
+from the manifest instead of hardcoding a copy of them. The manifest is the one
+contract the model, its metrics, and its OOD config are all published through
+together; nothing here is copy-pasted from a notebook's printed output.
 
 Only ResNet18 has an ONNX export path today (see 05_model_comparison.ipynb's Decision
 cell) — this script promotes that model only.
@@ -17,6 +21,7 @@ Does not commit anything — it prints the exact `git add`/`git commit` commands
 """
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -30,6 +35,7 @@ from sklearn.metrics import precision_score, recall_score, roc_auc_score
 LAB_DIR = Path(__file__).resolve().parent
 ONNX_SRC = LAB_DIR / "artifacts" / "model.onnx"
 EMBEDDINGS_SRC = LAB_DIR / "artifacts" / "train_embeddings.npy"
+OOD_CONFIG_SRC = LAB_DIR / "artifacts" / "ood_config.json"
 PREDICTIONS_CSV = LAB_DIR / "artifacts" / "predictions" / "phase4_test_predictions.csv"
 APP_MODEL_DIR = LAB_DIR.parent / "app" / "model"
 ONNX_DST = APP_MODEL_DIR / "artifacts" / "model.onnx"
@@ -83,10 +89,13 @@ def main():
         sys.exit(f"{ONNX_SRC} not found — run lab/src/train.py or 04_dl_cv_transfer_learning.ipynb first.")
     if not EMBEDDINGS_SRC.exists():
         sys.exit(f"{EMBEDDINGS_SRC} not found — run lab/src/train.py first (it's produced alongside model.onnx).")
+    if not OOD_CONFIG_SRC.exists():
+        sys.exit(f"{OOD_CONFIG_SRC} not found — run 04_dl_cv_transfer_learning.ipynb's OOD calibration cell first.")
     if not PREDICTIONS_CSV.exists():
         sys.exit(f"{PREDICTIONS_CSV} not found — run 04_dl_cv_transfer_learning.ipynb's test-evaluation cells first.")
 
     metrics = compute_test_metrics()
+    ood_config = json.loads(OOD_CONFIG_SRC.read_text())
     commit = git_commit_hash()
     model_version = args.model_version or f"resnet18-{commit}"
 
@@ -99,6 +108,7 @@ def main():
         "trained_from_commit": commit,
         "dataset_version": args.dataset_version,
         "metrics": metrics,
+        "ood": ood_config,
         "promoted_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     MANIFEST_PATH.write_text(MANIFEST_HEADER + yaml.dump(manifest, sort_keys=False))

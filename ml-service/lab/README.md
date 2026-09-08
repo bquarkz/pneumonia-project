@@ -25,7 +25,8 @@ lab/
     train.py             # training script + ONNX export
     features.py          # 12 hand-engineered features for 01/03 (+ test_features.py)
     ood.py                # OOD guardrail (grayscale check + k-NN embedding distance) —
-                          # copy kept in sync in app/model/inference.py (+ test_ood.py)
+                          # functions kept in sync in app/model/inference.py, config
+                          # published via manifest.yaml (see "Promoting a model") (+ test_ood.py)
   data/
     sample/               # tiny fixture (2 images/split), committed — used by
                           # src/test_features.py, not the training pipeline. Full dataset
@@ -46,6 +47,13 @@ At the end, it generates `lab/artifacts/model_best.pt` (PyTorch checkpoint), `la
 `lab/artifacts/train_embeddings.npy` (every `train` image's embedding, the reference set
 `lab/src/ood.py`'s k-NN out-of-distribution check compares against).
 
+`04_dl_cv_transfer_learning.ipynb`'s OOD calibration cell then recalibrates the k-NN threshold
+against those embeddings and writes `lab/artifacts/ood_config.json` — the guardrail's full
+parameters (`max_channel_std`, `min_grayscale_fraction`, `k_neighbors`,
+`knn_distance_threshold`). `promote.py` folds this into `manifest.yaml`'s `ood` section (see
+"Promoting a model" below); `app/model/inference.py` reads that section at startup instead of
+hardcoding these values.
+
 To regenerate `model.onnx`/`train_embeddings.npy` from an existing checkpoint without
 retraining (e.g. after changing `export_artifacts` in `train.py`), pass `--checkpoint`:
 
@@ -62,10 +70,13 @@ the deps in `../requirements.txt`.
 
 `promote.py` copies `artifacts/model.onnx` and `artifacts/train_embeddings.npy` to
 `../app/model/artifacts/` and fills in `../app/model/manifest.yaml` — `trained_from_commit`
-(`git rev-parse --short HEAD`) and `metrics` (recomputed from
+(`git rev-parse --short HEAD`), `metrics` (recomputed from
 `artifacts/predictions/phase4_test_predictions.csv`, the same file
-`05_model_comparison.ipynb` reads) are filled in automatically; you only supply
-`dataset_version` (which dataset/version this model was trained on):
+`05_model_comparison.ipynb` reads), and `ood` (copied from `artifacts/ood_config.json`) are
+filled in automatically; you only supply `dataset_version` (which dataset/version this model
+was trained on). `manifest.yaml` is the one contract the model, its metrics, and its OOD
+guardrail config are all published through — `app/model/inference.py` reads all of it at
+startup instead of hardcoding a copy of any of these values:
 
 ```bash
 ./promote.sh --dataset-version "<e.g. a Kaggle dataset URL + date>"
@@ -76,10 +87,11 @@ works from any cwd. (Calling `python promote.py ...` directly also works, as lon
 `pneumonia-lab` is already active.)
 
 Only ResNet18 has an ONNX export path today (see `05_model_comparison.ipynb`'s Decision
-cell), so this promotes that model. It requires `artifacts/model.onnx`,
-`artifacts/train_embeddings.npy` (both from `train.py`) and
-`artifacts/predictions/phase4_test_predictions.csv` (from
-`04_dl_cv_transfer_learning.ipynb`'s test-evaluation cells) to already exist.
+cell), so this promotes that model. It requires `artifacts/model.onnx` and
+`artifacts/train_embeddings.npy` (both from `train.py`), `artifacts/ood_config.json` (from
+`04_dl_cv_transfer_learning.ipynb`'s OOD calibration cell), and
+`artifacts/predictions/phase4_test_predictions.csv` (from that same notebook's
+test-evaluation cells) to already exist.
 
 `promote.py` does not commit anything — it prints the commands to run next. Check the
 `.onnx` size first (`ls -lh`; ≤100MB, `git add` directly works, above that see the Git LFS

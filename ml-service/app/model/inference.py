@@ -26,28 +26,25 @@ _MANIFEST_PATH = Path(__file__).parent / "manifest.yaml"
 # model") — keeps /predict responding with a well-formed result instead of erroring out.
 FALLBACK_VERSION = "fallback-0.0.0"
 
-# Out-of-distribution guardrail — MUST stay in sync with the copy in lab/src/ood.py.
-# Duplicated (not imported) because lab/ (conda env) and this runtime image never share a
-# Python path. Confidence alone doesn't flag OOD inputs: without this, random noise/solid
-# colors turn into a 93-99% confident "pneumonia" prediction (see lab/src/ood.py's docstring).
-MAX_CHANNEL_STD = 2.0
-MIN_GRAYSCALE_FRACTION = 0.95
-K_NEIGHBORS = 10
-# Calibrated in 04_dl_cv_transfer_learning.ipynb (p99 of leave-one-out k-NN distance among
-# training embeddings) — see lab/src/ood.py for the full calibration numbers and two known,
-# accepted gaps (a solid achromatic image, and a ~1% real-X-ray false-rejection rate).
-KNN_DISTANCE_THRESHOLD = 17.7
+# Out-of-distribution guardrail functions — MUST stay in sync with the copy in
+# lab/src/ood.py. Duplicated (not imported) because lab/ (conda env) and this runtime
+# image never share a Python path. Confidence alone doesn't flag OOD inputs: without
+# this, random noise/solid colors turn into a 93-99% confident "pneumonia" prediction
+# (see lab/src/ood.py's docstring). Unlike the functions, the actual threshold values
+# are NOT hardcoded here — Predictor reads them from manifest.yaml's `ood` section,
+# published by promote.py from lab/artifacts/ood_config.json (see lab/src/ood.py's
+# config_dict()), so the model and its OOD config move together as one contract.
 
 
 class NotChestXrayError(ValueError):
     """Raised when an uploaded image fails the out-of-distribution guardrail."""
 
 
-def _is_grayscale_like(image: Image.Image) -> bool:
+def _is_grayscale_like(image: Image.Image, max_channel_std: float, min_grayscale_fraction: float) -> bool:
     array = np.asarray(image.convert("RGB"), dtype=np.float32)
     per_pixel_channel_std = array.std(axis=2)
-    grayscale_fraction = (per_pixel_channel_std <= MAX_CHANNEL_STD).mean()
-    return bool(grayscale_fraction >= MIN_GRAYSCALE_FRACTION)
+    grayscale_fraction = (per_pixel_channel_std <= max_channel_std).mean()
+    return bool(grayscale_fraction >= min_grayscale_fraction)
 
 
 def _reference_stats(reference_embeddings: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -65,7 +62,7 @@ def _knn_distance(
     reference_embeddings_standardized: np.ndarray,
     mean: np.ndarray,
     std: np.ndarray,
-    k: int = K_NEIGHBORS,
+    k: int,
 ) -> float:
     query_standardized = _standardize(query_embedding, mean, std)
     distances = np.linalg.norm(reference_embeddings_standardized - query_standardized[None, :], axis=1)
@@ -96,24 +93,29 @@ class Predictor:
 
         self.model_version = manifest.get("model_version")
         self._session = None
+        self._ood_config = None
         self._ref_mean = None
         self._ref_std = None
         self._ref_standardized = None
 
         if self.model_version and _ONNX_PATH.exists():
             # No try/except here on purpose: a manifest that claims a promoted model
-            # but fails to load (corrupt file, opset mismatch, missing embeddings) SHALL
-            # crash startup loudly, not silently degrade to fallback predictions.
+            # but fails to load (corrupt file, opset mismatch, missing embeddings/`ood`
+            # config) SHALL crash startup loudly, not silently degrade to fallback
+            # predictions.
             self._session = ort.InferenceSession(str(_ONNX_PATH), providers=["CPUExecutionProvider"])
             logger.info("Loaded model version=%s from %s", self.model_version, _ONNX_PATH)
+
+            self._ood_config = manifest["ood"]
 
             reference_embeddings = np.load(_EMBEDDINGS_PATH)
             self._ref_mean, self._ref_std = _reference_stats(reference_embeddings)
             self._ref_standardized = _standardize(reference_embeddings, self._ref_mean, self._ref_std)
             logger.info(
-                "Loaded %d reference embeddings for k-NN OOD check from %s",
+                "Loaded %d reference embeddings for k-NN OOD check from %s (config: %s)",
                 reference_embeddings.shape[0],
                 _EMBEDDINGS_PATH,
+                self._ood_config,
             )
         else:
             self.model_version = FALLBACK_VERSION
@@ -123,23 +125,28 @@ class Predictor:
             )
 
     def predict(self, image_bytes: bytes) -> tuple[bool, float]:
+        if self._session is None:
+            return _fallback_predict(image_bytes)
+
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        if not _is_grayscale_like(image):
+        if not _is_grayscale_like(
+            image, self._ood_config["max_channel_std"], self._ood_config["min_grayscale_fraction"]
+        ):
             raise NotChestXrayError(
                 "Uploaded image does not look like a chest X-ray (expected a grayscale scan)."
             )
 
-        if self._session is None:
-            return _fallback_predict(image_bytes)
-
         input_name = self._session.get_inputs()[0].name
         logits, embedding = self._session.run(["logits", "embedding"], {input_name: _preprocess(image)})
 
-        distance = _knn_distance(embedding[0], self._ref_standardized, self._ref_mean, self._ref_std)
-        if distance > KNN_DISTANCE_THRESHOLD:
+        threshold = self._ood_config["knn_distance_threshold"]
+        distance = _knn_distance(
+            embedding[0], self._ref_standardized, self._ref_mean, self._ref_std, k=self._ood_config["k_neighbors"]
+        )
+        if distance > threshold:
             raise NotChestXrayError(
                 f"Uploaded image does not look like a chest X-ray (embedding distance "
-                f"{distance:.1f} exceeds the {KNN_DISTANCE_THRESHOLD:.1f} threshold)."
+                f"{distance:.1f} exceeds the {threshold:.1f} threshold)."
             )
 
         probability = float(1.0 / (1.0 + np.exp(-logits.ravel()[0])))

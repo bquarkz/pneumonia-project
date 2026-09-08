@@ -16,6 +16,12 @@ input is. Two independent, cheap checks run before the model:
    nearest-neighbor method from M4 Unit 5 (K-Nearest Neighbors) -- Euclidean distance on
    standardized features -- applied to anomaly thresholding instead of majority-vote
    classification.
+
+The four parameters below (MAX_CHANNEL_STD, MIN_GRAYSCALE_FRACTION, K_NEIGHBORS,
+KNN_DISTANCE_THRESHOLD) are published to app/model/manifest.yaml's `ood` section by
+promote.py (via config_dict() and lab/artifacts/ood_config.json) -- app/model/inference.py
+reads them from the manifest at startup, not from a hardcoded copy of this module. See
+lab/README.md's Training/Promoting sections.
 """
 
 import numpy as np
@@ -30,12 +36,16 @@ MAX_CHANNEL_STD = 2.0
 MIN_GRAYSCALE_FRACTION = 0.95
 
 
-def is_grayscale_like(image: Image.Image) -> bool:
+def is_grayscale_like(
+    image: Image.Image,
+    max_channel_std: float = MAX_CHANNEL_STD,
+    min_grayscale_fraction: float = MIN_GRAYSCALE_FRACTION,
+) -> bool:
     """True if `image` is grayscale-like (R ≈ G ≈ B per pixel), as a real chest X-ray is."""
     array = np.asarray(image.convert("RGB"), dtype=np.float32)
     per_pixel_channel_std = array.std(axis=2)
-    grayscale_fraction = (per_pixel_channel_std <= MAX_CHANNEL_STD).mean()
-    return bool(grayscale_fraction >= MIN_GRAYSCALE_FRACTION)
+    grayscale_fraction = (per_pixel_channel_std <= max_channel_std).mean()
+    return bool(grayscale_fraction >= min_grayscale_fraction)
 
 
 # A smaller k than M4 Unit 5's classification rule of thumb (k ~= sqrt(n) ~= 72 for this
@@ -91,3 +101,18 @@ def knn_distance(
     distances = np.linalg.norm(reference_embeddings_standardized - query_standardized[None, :], axis=1)
     distances.sort()
     return float(distances[:k].mean())
+
+
+def config_dict(knn_distance_threshold: float = KNN_DISTANCE_THRESHOLD) -> dict:
+    """The OOD parameters as a plain dict, in the shape 04_dl_cv_transfer_learning.ipynb's
+    calibration cell writes to lab/artifacts/ood_config.json (passing its freshly
+    recalibrated threshold, since that value is specific to that run's own
+    train_embeddings.npy, not this module's default) for promote.py to fold into
+    app/model/manifest.yaml. The manifest is the actual contract app/model/inference.py
+    reads at startup -- see lab/README.md's Training/Promoting sections."""
+    return {
+        "max_channel_std": MAX_CHANNEL_STD,
+        "min_grayscale_fraction": MIN_GRAYSCALE_FRACTION,
+        "k_neighbors": K_NEIGHBORS,
+        "knn_distance_threshold": knn_distance_threshold,
+    }
