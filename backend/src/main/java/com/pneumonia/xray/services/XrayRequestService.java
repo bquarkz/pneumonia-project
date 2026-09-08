@@ -14,6 +14,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -162,6 +163,22 @@ public class XrayRequestService {
 		} finally {
 			MDC.remove(CORRELATION_ID);
 		}
+	}
+
+	/**
+	 * Loads the stored image bytes for a request belonging to {@code userId} - the same
+	 * ownership check as {@link #retry}, so a user can only ever view their own uploads,
+	 * regardless of that request's current status.
+	 *
+	 * @throws ResponseStatusException 404 if no such request exists for this user.
+	 */
+	@Transactional(readOnly = true)
+	public Resource loadImage(String userId, UUID id) {
+
+		XrayRequest existing = repository.findByIdAndUserId(id, userId)
+			.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "X-ray request not found"));
+
+		return storageService.load(existing.storagePath());
 	}
 
 	/**

@@ -5,7 +5,10 @@ import com.pneumonia.xray.dtos.XrayRequestResponse;
 import com.pneumonia.xray.services.XrayRequestService;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -46,5 +49,12 @@ public class XrayRequestController {
 	@PostMapping("/{id}/retry")
 	public XrayRequestResponse retry(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
 		return xrayRequestService.retry(jwt.getSubject(), id);
+	}
+
+	/** Only JPEG uploads are accepted (batch validation), so the response is always image/jpeg. */
+	@GetMapping("/{id}/image")
+	public ResponseEntity<Resource> image(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
+		Resource resource = xrayRequestService.loadImage(jwt.getSubject(), id);
+		return ResponseEntity.ok().contentType(MediaType.IMAGE_JPEG).body(resource);
 	}
 }

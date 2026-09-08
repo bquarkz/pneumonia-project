@@ -10,6 +10,7 @@ import com.pneumonia.xray.models.XrayRequest;
 import com.pneumonia.xray.models.XrayStatus;
 import com.pneumonia.xray.daos.XrayRequestDAO;
 import com.pneumonia.xray.services.XrayRequestService;
+import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -19,11 +20,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.core.io.Resource;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.modulith.test.ApplicationModuleTest;
 import org.springframework.modulith.test.ApplicationModuleTest.BootstrapMode;
 import org.springframework.modulith.test.PublishedEvents;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StreamUtils;
 
 /**
  * Representative use case for the {@code xray} module: uploading a valid batch stores the
@@ -192,5 +195,23 @@ class XrayModuleTests {
 		assertThat(reloaded.rejectionReason())
 			.isEqualTo("Uploaded image does not look like a chest X-ray (expected a grayscale scan).");
 		assertThat(reloaded.retryCount()).isEqualTo(1);
+	}
+
+	/**
+	 * End-to-end round trip through the real (filesystem-backed) {@code StorageService}: the
+	 * exact bytes a batch upload stores are the exact bytes {@link XrayRequestService#loadImage}
+	 * returns, regardless of the request's current status - it's never gated on {@code DONE}.
+	 */
+	@Test
+	void loadingImage_returnsTheExactBytesThatWereUploaded() throws IOException {
+
+		byte[] uploadedBytes = "pretend-jpeg-bytes-for-viewing".getBytes();
+		MockMultipartFile jpeg = new MockMultipartFile("files", "view-me.jpg", "image/jpeg", uploadedBytes);
+		XrayRequestResponse queued =
+			xrayRequestService.uploadBatch("keycloak-subject-mno", List.of(jpeg)).get(0);
+
+		Resource image = xrayRequestService.loadImage("keycloak-subject-mno", queued.id());
+
+		assertThat(StreamUtils.copyToByteArray(image.getInputStream())).isEqualTo(uploadedBytes);
 	}
 }
