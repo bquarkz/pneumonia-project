@@ -10,12 +10,19 @@ from PIL import Image
 
 logger = logging.getLogger("ml-service")
 
-# Preprocessing constants — MUST stay in sync with the copy in lab/src/dataset.py.
+# Preprocessing constants — MUST stay in sync with the copy in lab/src/dataset.py,
+# *including* the resize interpolation method below: torchvision's `Resize` (used by
+# build_transform() at training/evaluation time) defaults to BILINEAR, which is not
+# PIL's own default (BICUBIC) — leaving `resample` unspecified here once silently
+# skewed predictions on some images by double-digit percentage points relative to
+# what the training notebook evaluated, since the two libraries disagree on a resize
+# default that looks the same on the surface ("resize to IMG_SIZE") but isn't.
 # Duplicated (not imported) because lab/ (conda env) and this runtime image never
 # share a Python path.
 IMG_SIZE = 224
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+_RESIZE_RESAMPLE = Image.BILINEAR
 
 _ARTIFACTS_DIR = Path(__file__).parent / "artifacts"
 _ONNX_PATH = _ARTIFACTS_DIR / "model.onnx"
@@ -77,7 +84,7 @@ def _knn_distance(
 
 
 def _preprocess(image: Image.Image) -> np.ndarray:
-    image = image.resize((IMG_SIZE, IMG_SIZE))
+    image = image.resize((IMG_SIZE, IMG_SIZE), resample=_RESIZE_RESAMPLE)
     array = (np.asarray(image, dtype=np.float32) / 255.0 - MEAN) / STD
     return array.transpose(2, 0, 1)[np.newaxis, ...]  # NCHW, batch of 1
 
