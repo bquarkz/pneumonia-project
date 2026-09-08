@@ -45,16 +45,24 @@ def is_grayscale_like(image: Image.Image) -> bool:
 # averaging in more distant ones.
 K_NEIGHBORS = 10
 
-# Calibrated empirically against lab/artifacts/train_embeddings.npy (5216 x 512): the
-# leave-one-out k-NN distance (standardized embeddings, k=10) among training points
-# themselves has p99 ~= 17.9, max ~= 20.0 (1500-point sample) -- real held-out `test`
-# X-rays scored 11.75-16.42, well inside that band. Confirmed OOD content -- grayscale
-# random noise, a checkerboard pattern, a real X-ray with its pixels spatially scrambled
-# -- scored 32-36, comfortably clear of this threshold. A smooth grayscale gradient
-# scored 18.2, close enough to slip past it -- a known, accepted limitation: this catches
-# clearly structureless/unrelated content, not every synthetic edge case, and the
-# threshold favors never rejecting a real X-ray over catching every adversarial pattern.
-KNN_DISTANCE_THRESHOLD = 20.0
+# Calibrated empirically in 04_dl_cv_transfer_learning.ipynb against that run's
+# lab/artifacts/train_embeddings.npy (5216 x 512): the leave-one-out k-NN distance
+# (standardized embeddings, k=10) among a 1000-image training sample has p50=13.1,
+# p90=15.2, p95=16.1, p99=17.7, max=21.5 -- this threshold is that p99. Confirmed OOD
+# content -- grayscale random noise, a checkerboard pattern -- scored ~36, comfortably
+# clear of it; 19 of 20 sampled real `test` X-rays scored under it (10.7-18.0).
+#
+# Two known, accepted gaps, not solved here: (1) a solid white (or black) image is
+# technically grayscale (R==G==B holds for any achromatic color) and its embedding
+# distance (17.4) lands just under this threshold too -- a flat, textureless image
+# would still reach the model. Catching it needs a third check (e.g. near-zero
+# pixel-to-pixel variance, which no real X-ray has), not yet implemented. (2) the one
+# real `test` X-ray that did land over this threshold (18.0) was a true PNEUMONIA case
+# the model itself would have flagged with 99.95% confidence -- the p99 threshold's
+# ~1% false-rejection rate is a deliberate trade favoring almost never blocking a real
+# patient over catching every OOD input; raising it (e.g. to the observed max, 21.5)
+# trades that back the other way.
+KNN_DISTANCE_THRESHOLD = 17.7
 
 
 def reference_stats(reference_embeddings: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

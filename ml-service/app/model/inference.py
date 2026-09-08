@@ -33,7 +33,10 @@ FALLBACK_VERSION = "fallback-0.0.0"
 MAX_CHANNEL_STD = 2.0
 MIN_GRAYSCALE_FRACTION = 0.95
 K_NEIGHBORS = 10
-KNN_DISTANCE_THRESHOLD = 20.0
+# Calibrated in 04_dl_cv_transfer_learning.ipynb (p99 of leave-one-out k-NN distance among
+# training embeddings) — see lab/src/ood.py for the full calibration numbers and two known,
+# accepted gaps (a solid achromatic image, and a ~1% real-X-ray false-rejection rate).
+KNN_DISTANCE_THRESHOLD = 17.7
 
 
 class NotChestXrayError(ValueError):
