@@ -28,19 +28,20 @@ replaced by a single logit output (`P(pneumonia)`). Fine-tuned on the project's 
 **Training run.** 10 epochs, Adam optimizer, `lr=1e-4`, `batch_size=32`, on Apple Silicon
 (`mps` backend, ~1 minute/epoch).
 
-**Result on the untouched, 624-image `test` split:**
+**Result on the untouched, 624-image `test` split** (final numbers, after the `pos_weight`
+fix described below — see that section for the before/after):
 
 | Metric | Value |
 |---|---|
-| Accuracy | 0.8301 |
-| Precision | 0.7874 |
-| Recall | 0.9974 |
-| F1 | 0.8801 |
-| ROC-AUC | 0.9422 |
+| Accuracy | 0.8446 |
+| Precision | 0.8033 |
+| Recall | 0.9949 |
+| F1 | 0.8889 |
+| ROC-AUC | 0.9574 |
 
-Confusion matrix: 129 true negatives, 105 false positives, **1 false negative**, 389 true
+Confusion matrix: 139 true negatives, 95 false positives, **2 false negatives**, 388 true
 positives. In a screening context, Recall is the metric that matters most — missing a true
-positive is more costly than a false alarm — and this model misses only 1 of 390 PNEUMONIA
+positive is more costly than a false alarm — and this model misses only 2 of 390 PNEUMONIA
 cases.
 
 **Comparison against the classical baselines** (`05_model_comparison.ipynb`):
@@ -49,7 +50,7 @@ cases.
 |---|---|---|---|---|---|
 | M4 — Logistic Regression | 0.7372 | 0.7665 | 0.8333 | 0.7985 | 0.7679 |
 | M6 — XGBoost | 0.7420 | 0.7585 | 0.8615 | 0.8067 | 0.8040 |
-| **ResNet18 (winner)** | **0.8301** | **0.7874** | **0.9974** | **0.8801** | **0.9422** |
+| **ResNet18 (winner)** | **0.8446** | **0.8033** | **0.9949** | **0.8889** | **0.9574** |
 
 ResNet18 won decisively on every metric, especially Recall — the failure mode that matters
 most for screening.
@@ -63,7 +64,7 @@ epoch 1 it stopped providing any signal to distinguish between checkpoints. Comb
 script's strict `>` comparison (a later epoch only overwrites the checkpoint if its `val_auc`
 is *higher*, not merely equal), the checkpoint actually promoted was **epoch 1's**, not one
 chosen by genuine competition across all 10 epochs. That epoch 1's weights still generalized
-this well to `test` (ROC-AUC 0.9422) says more about how fast ImageNet-pretrained features
+this well to `test` (ROC-AUC 0.9574) says more about how fast ImageNet-pretrained features
 adapt to this task than about the early-stopping logic, which never got exercised.
 
 ### Finding: training turned out to be incidentally deterministic
@@ -98,13 +99,58 @@ high Recall, mediocre Precision, driven by over-predicting `PNEUMONIA`.
 **Fix implemented:** `lab/src/train.py` now computes `pos_weight` directly from `train_dir`
 (`num_normal / num_pneumonia`, the same ratio M6's `scale_pos_weight` computes from its own
 pool — recomputed fresh, not copied from Phase 3's numbers) and passes it to
-`BCEWithLogitsLoss(pos_weight=...)`. For this project's `train` split, that value is **0.346**.
+`BCEWithLogitsLoss(pos_weight=...)`. For this project's `train` split, that value is **0.3461**.
 Since `PNEUMONIA` is the *majority* class here (unlike the more typical case this parameter is
 used for, where the positive class is rare), a `pos_weight` below 1 downweights `PNEUMONIA`'s
-loss contribution — the correct direction to counter the bias. Retraining with this change, and
-re-measuring Precision/Recall/the confusion matrix, was pending at the time of writing this
-report (see `04_dl_cv_transfer_learning.ipynb`/`05_model_comparison.ipynb` for whichever numbers
-are current).
+loss contribution — the correct direction to counter the bias.
+
+**Result, retrained and re-measured:** improved on every metric but Recall (which stayed
+effectively as high) — Accuracy 0.8301→0.8446, Precision 0.7874→0.8033, ROC-AUC 0.9422→0.9574,
+Recall 0.9974→0.9949 (one additional missed PNEUMONIA case out of 390), `NORMAL` false-positive
+rate 44.9%→40.6% (105/234 → 95/234). Not a strict precision-for-recall trade — a genuine, broad
+improvement from a single loss-function fix.
+
+### Finding: a silent resize-interpolation mismatch between training and serving
+
+A second issue surfaced from the same manual test image, after the `pos_weight` fix: the
+service and the training notebook reported *different* probabilities for the identical file
+(67.9% via the running service vs. 77.3% in `phase4_test_predictions.csv`). Root cause:
+`app/model/inference.py`'s `_preprocess()` called `image.resize((IMG_SIZE, IMG_SIZE))` with no
+`resample` argument, defaulting to PIL's own default (`BICUBIC`); `lab/src/dataset.py`'s
+`build_transform()` (used for every training/evaluation number in this project) uses
+`torchvision.transforms.Resize`, which defaults to `BILINEAR` instead. Both "just resize the
+image" on the surface, but the two libraries silently disagree on how.
+
+Measured impact on a 100-image `test` sample: **3% of classifications flipped** between the two
+interpolation methods, with a mean probability difference of 0.015 but a long tail (max 0.22 —
+this exact image was one of the worst-affected). **Fix:** `_preprocess()` now passes
+`resample=Image.BILINEAR` explicitly, matching training. The same fix also corrected the k-NN
+out-of-distribution checks' query-time embeddings, which reuse the same preprocessing function
+and had been silently inconsistent with how their reference embeddings were computed.
+
+### Attempted improvement: ensembling M4/M6 with ResNet18
+
+Motivated by the same investigation: on that one `NORMAL` image, M4 and M6 were both confidently
+correct (5.6% and 5.7% "pneumonia") while ResNet18 was confidently wrong (77.3%, even after the
+two fixes above). Since all three models' raw probabilities on the identical 624-image `test`
+split were already saved to CSV, combining them costs nothing to test — no retraining required.
+
+| Approach | Accuracy | ROC-AUC |
+|---|---|---|
+| **ResNet18 alone** | **0.8446** | **0.9574** |
+| Simple average (M4+M6+ResNet18)/3 | 0.7837 | 0.8864 |
+| Weighted average (0.2 / 0.2 / 0.6) | 0.8365 | 0.9238 |
+| Weighted average (0.1 / 0.1 / 0.8) | 0.8478 | 0.9386 |
+| Majority vote (≥2 of 3 say PNEUMONIA) | 0.7612 | 0.7226 |
+
+Every combination tested **underperforms ResNet18 alone** on ROC-AUC, including a 90%-ResNet18
+weighting. The simple average does fix this one image (its average probability drops to 0.295,
+correctly below the threshold) — but that is exactly the trap: M4 and M6 are considerably
+weaker models overall (ROC-AUC 0.77–0.80 vs. ResNet18's 0.9574), so blending in even a small
+share of their predictions adds more noise than complementary signal. Ensembling helps most when
+models of comparable strength make different, uncorrelated errors; here one model dominates, so
+this isn't that scenario. **Not adopted** — chasing a single misclassified test image would have
+made the deployed model measurably worse across the other 623.
 
 ## 3. Engineering Problems Found During Training & Export
 
@@ -153,9 +199,9 @@ input is. Testing with synthetic images made this concrete and uncomfortable:
 
 | Input | P(pneumonia) |
 |---|---|
-| Random color noise | 99.6% |
-| Solid red | 93.5% |
-| Solid white | 97.9% |
+| Random color noise | 98.8% |
+| Solid red | 99.7% |
+| Solid white | 99.7% |
 
 None of these are remotely related to a chest X-ray. Nothing in the serving path was stopping
 them from producing a confident, meaningless diagnosis.
@@ -188,16 +234,20 @@ thresholding instead of majority-vote classification.
   majority-vote classification, not sensitivity to local structure for anomaly thresholding.
 - Threshold calibrated as the 99th percentile of the leave-one-out k-NN distance among the
   training images themselves (i.e. "how far does a genuine training image typically sit from
-  its own nearest neighbors?"): **17.7**.
-- Validated: random noise and a checkerboard pattern scored ~36 (comfortably rejected); the
-  large majority of real held-out `test` X-rays scored well under the threshold.
+  its own nearest neighbors?"): **18.6** (p50 13.6, p90 15.8, p95 16.8, p99 18.6, max 20.5).
+- Validated: random noise (58.8) and a checkerboard pattern (44.7) rejected with a wide margin;
+  19 of 20 sampled real `test` X-rays scored under the threshold.
 
 **Cost, measured honestly:** at the p99 threshold, roughly **1% of genuine test X-rays** were
 themselves rejected as false positives — a deliberate trade favoring "almost never block a real
 patient" over "catch every possible anomaly."
 
-**Known gap at this point:** solid white passed *both* guardrails (grayscale check trivially,
-and its k-NN distance in this space landed just under the threshold).
+**Known gap at this point:** solid white passed both guardrails (grayscale check trivially, and
+its k-NN distance in this space landed just under the threshold) — true for the model checkpoint
+active when this gap was found. A later retrain (see the `pos_weight` fix in §2) happened to
+shift this embedding space enough that guardrail 2 alone now also rejects solid white; that's a
+side effect of retraining, not a designed fix, and isn't something to rely on — guardrail 3
+below is the actual, deliberate fix for this class of gap.
 
 ### 5.4 The serious failure found in manual testing: wrong body part, high confidence
 
@@ -232,26 +282,34 @@ relevant visual features.
   weights, so this export is identical on every training run and does not depend on the
   fine-tuning outcome at all.
 - A second reference embedding set (`train_embeddings_pretrained.npy`) computed the same way.
-- Calibrated the same way as guardrail 2 (leave-one-out k-NN distance, p99 threshold): **26.8**.
+- Calibrated the same way as guardrail 2 (leave-one-out k-NN distance, p99 threshold): **27.9**
+  (p50 21.3, p90 24.1, p95 25.1, p99 27.9, max 30.8).
 
 **Result:**
 
 | Case | Fine-tuned space (guardrail 2) | Pretrained space (guardrail 3) |
 |---|---|---|
-| Abdomen/pelvis X-ray | 16.1 → **accepted** (bug) | 27.4 → **rejected** (fixed) |
-| Solid white | 17.4 → accepted (known gap) | ~43 → **rejected** (bonus fix) |
-| Skull X-ray | 23.4 → rejected | ~41 → rejected |
-| Random noise / checkerboard | rejected | rejected |
-| Real `test` X-rays | mostly accepted | mostly accepted |
+| Abdomen/pelvis X-ray | **accepted** (bug) | **rejected** (fixed) |
+| Solid white | 21.4 → rejected* | 42.8 → rejected |
+| Skull X-ray | rejected | rejected |
+| Random noise / checkerboard | 58.8 / 44.7 → rejected | 44.4 / 65.2 → rejected |
+| Real `test` X-rays | 19/20 accepted | 20/20 accepted |
 
-Guardrail 3 independently closed both the abdomen failure *and* the solid-white gap guardrail
-2 alone had left open.
+\* Solid white is now caught by guardrail 2 alone too, as noted in §5.3 — an incidental effect
+of a later retrain, not something guardrail 2 was designed to catch. Guardrail 3 is what
+deliberately, reliably closes this class of gap, independent of which checkpoint guardrail 2
+happens to be running.
+
+Guardrail 3 is the deliberate fix for the abdomen (wrong-body-part) failure specifically — the
+one gap guardrail 2 cannot close no matter how it's retrained, since it comes from a fine-tuned
+embedding that was never asked to preserve body-region signal in the first place.
 
 **Cost, measured honestly (again).** Guardrail 2 and guardrail 3 are each independently
-calibrated to a ~1% false-rejection rate on real X-rays. Running both and rejecting if
-*either* fires does not stay near 1% — a real X-ray only has to fail one of the two checks.
-Measured on a 200–300 image real `test` sample, the **combined false-rejection rate lands
-around 2–3%**. This is a genuine trade-off: more wrong-body-part (or otherwise anomalous)
+calibrated to a ~1% false-rejection rate on real X-rays. Measured on a 200-image real `test`
+sample: guardrail 2 alone rejected 4 (2.0%), guardrail 3 alone rejected 1 (0.5%), and running
+both together (rejecting if *either* fires) rejected 5 (**2.5%**) — confirming that stacking
+two independently ~1%-calibrated checks does not stay near 1%, since a real X-ray only has to
+fail one of them. This is a genuine trade-off: more wrong-body-part (or otherwise anomalous)
 uploads get caught, at the cost of more real patients occasionally needing to re-submit a
 rejected upload. Given the alternative — a wrong body part silently returning a confident,
 wrong diagnosis — the project's judgment is that this trade is worth it for a screening tool,
@@ -282,7 +340,7 @@ an explicitly-labeled, non-diagnostic placeholder mode, never a silently degrade
 
 ## 7. Known Limitations / Future Work
 
-- **Combined false-rejection rate (~2–3%)** on real X-rays is a measured, accepted cost of
+- **Combined false-rejection rate (2.5%, n=200)** on real X-rays is a measured, accepted cost of
   guardrails 2+3 together — not eliminated, only documented and judged worthwhile.
 - **No dedicated body-part classifier.** Guardrail 3 is a general-purpose anomaly detector
   repurposed for this specific gap; a model trained explicitly to classify anatomical region
