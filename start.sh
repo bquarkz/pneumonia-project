@@ -5,7 +5,22 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-docker compose up --build -d
+if [ ! -f .env ]; then
+  echo "No .env found, copying .env.example to .env..."
+  cp .env.example .env
+fi
+
+MAX_ATTEMPTS=3
+attempt=1
+until docker compose up --build -d; do
+  if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+    echo "Failed to build/start the stack after $MAX_ATTEMPTS attempts. This usually means Docker couldn't reach Docker Hub (check your internet connection) rather than a problem with the project itself." >&2
+    exit 1
+  fi
+  echo "Build failed (attempt $attempt/$MAX_ATTEMPTS), likely a transient network issue pulling images. Retrying in 10s..."
+  attempt=$((attempt + 1))
+  sleep 10
+done
 
 SERVICES=(postgres rabbitmq keycloak backend ml-service frontend)
 TIMEOUT=600
