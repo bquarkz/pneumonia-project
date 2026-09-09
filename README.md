@@ -4,21 +4,22 @@ Master's thesis project: upload chest X-rays in batch, have each one processed
 asynchronously by a Python ML service through a RabbitMQ pipeline, and watch per-image status
 update live in the browser — the whole stack runs locally with a single Docker command.
 
-Full architecture rationale lives in `.claude/discussion/decisions/DEC-0001-xray-detection-architecture.md`
-and the execution blueprint in `.claude/discussion/plans/PLN-0001-xray-detection-system.md`.
-
 ## Architecture at a glance
 
 - **backend/** — Java, Spring Boot + Spring Modulith (3 modules: `infra`, `users`, `xray`).
   Owns the X-ray request lifecycle as a finite state machine (`RECEIVED → QUEUED → PROCESSING
-  → DONE`/`FAILED`, with `RETRYING` in between), driven by RabbitMQ (Spring Modulith Event
-  Externalization to produce, plain `@RabbitListener` to consume), persisted in Postgres, and
-  pushed to the browser via Server-Sent Events.
-- **frontend/** — Angular (latest), batch upload + live status list, authenticated via
-  Keycloak (`keycloak-angular`).
-- **ml-service/** — Python/FastAPI. Exposes the final `/predict` contract behind a
-  **placeholder** prediction (no real trained model yet — that's a separate, not-yet-made
-  decision). Every response is clearly labeled as non-diagnostic.
+  → DONE`/`FAILED`/`INVALID`, with `RETRYING` in between), driven by RabbitMQ (Spring Modulith
+  Event Externalization to produce, plain `@RabbitListener` to consume), persisted in Postgres,
+  and pushed to the browser via Server-Sent Events.
+- **frontend/** — Angular (latest), batch upload + live status list (with a "View image" button
+  per request), authenticated via Keycloak (`keycloak-angular`).
+- **ml-service/** — Python/FastAPI. Serves a fine-tuned ResNet18 model (ROC-AUC 0.9574, Recall
+  0.9949, Precision 0.8033 on held-out test data) behind the `/predict` contract, gated by an
+  out-of-distribution guardrail (grayscale check + k-NN embedding-distance check) that rejects
+  non-chest-X-ray uploads with a 422 before they ever reach the model. See
+  [`ml-service/REPORT.md`](ml-service/REPORT.md) for the full build narrative and
+  [`ml-service/lab/README.md`](ml-service/lab/README.md) for training/promotion details. Every
+  response is clearly labeled as non-diagnostic.
 - **keycloak/** — realm import (`realm-export.json`): a public frontend client, a resource-
   server-only backend client, and one static fallback user. Google login is layered on
   afterward via a short manual walkthrough (see below) — it cannot be baked into the realm
@@ -71,9 +72,10 @@ It requires a one-time manual setup in Google Cloud Console (can't be automated 
 - **SSE status updates only work correctly with exactly one backend replica.** The in-process
   emitter registry is not shared across instances. This is an accepted trade-off, not a bug —
   scaling the backend is explicitly out of scope until after the thesis defense.
-- **The ML prediction is a placeholder**, not a real diagnosis, until the model-architecture
-  decision is made and implemented separately. It is deterministic (same image → same
-  placeholder result) but carries no medical meaning.
+- **The out-of-distribution guardrail isn't perfect.** Roughly a 1-2% false-rejection rate on
+  real chest X-rays, and a solid-color image can still slip past both checks. See
+  [`ml-service/REPORT.md`](ml-service/REPORT.md) for the full findings. The prediction itself
+  is still non-diagnostic regardless of accuracy — this is a thesis project, not a medical device.
 - **The RabbitMQ reconciliation/polling safety-net job is not implemented.** The primary path
   (RabbitMQ + manual ack + durable queues) already covers the common failure mode (a worker
   crashing mid-message); the extra safety net for edge cases is tracked as future work.
