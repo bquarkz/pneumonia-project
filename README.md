@@ -15,15 +15,14 @@ update live in the browser — the whole stack runs locally with a single Docker
   per request), authenticated via Keycloak (`keycloak-angular`).
 - **ml-service/** — Python/FastAPI. Serves a fine-tuned ResNet18 model (ROC-AUC 0.9574, Recall
   0.9949, Precision 0.8033 on held-out test data) behind the `/predict` contract, gated by an
-  out-of-distribution guardrail (grayscale check + k-NN embedding-distance check) that rejects
+  out-of-distribution guardrail (grayscale check + two k-NN embedding-distance checks, one in
+  the fine-tuned embedding and one in a separate frozen pretrained embedding) that rejects
   non-chest-X-ray uploads with a 422 before they ever reach the model. See
   [`ml-service/REPORT.md`](ml-service/REPORT.md) for the full build narrative and
   [`ml-service/lab/README.md`](ml-service/lab/README.md) for training/promotion details. Every
   response is clearly labeled as non-diagnostic.
 - **keycloak/** — realm import (`realm-export.json`): a public frontend client, a resource-
-  server-only backend client, and one static fallback user. Google login is layered on
-  afterward via a short manual walkthrough (see below) — it cannot be baked into the realm
-  import reliably.
+  server-only backend client, and one static fallback user.
 - Everything is wired together by the root `docker-compose.yml`, with healthchecks and
   `depends_on: condition: service_healthy` so services never race each other on boot.
 
@@ -34,7 +33,6 @@ Prerequisites: Docker + Docker Compose. Nothing else needs to be installed local
 ```bash
 cp .env.example .env
 # edit .env: set real Postgres/RabbitMQ passwords (any value works locally).
-# leave GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET empty for now — see below.
 
 ./start.sh
 ```
@@ -58,13 +56,6 @@ The other services aren't meant to be opened directly — they're listed here fo
 | RabbitMQ management  | http://localhost:15672                    |
 | ML service           | http://localhost:8000                     |
 
-## Enabling "Login with Google"
-
-Google is an *additional* login option on top of the static fallback user, not a replacement.
-It requires a one-time manual setup in Google Cloud Console (can't be automated into
-`docker compose up` — it's an external account you control). Full walkthrough:
-[`scripts/configure-google-idp.md`](scripts/configure-google-idp.md).
-
 ## Known, deliberately-accepted limitations
 
 - **`sample-data/` ships empty.** No real chest X-ray images are included — see
@@ -72,8 +63,10 @@ It requires a one-time manual setup in Google Cloud Console (can't be automated 
 - **SSE status updates only work correctly with exactly one backend replica.** The in-process
   emitter registry is not shared across instances. This is an accepted trade-off, not a bug —
   scaling the backend is explicitly out of scope until after the thesis defense.
-- **The out-of-distribution guardrail isn't perfect.** Roughly a 1-2% false-rejection rate on
-  real chest X-rays, and a solid-color image can still slip past both checks. See
+- **The out-of-distribution guardrail isn't perfect.** Each of its three checks (grayscale,
+  k-NN distance in the fine-tuned embedding, k-NN distance in a separate frozen pretrained
+  embedding) is individually calibrated to roughly a 1% false-rejection rate on real chest
+  X-rays, but stacking them pushes the combined measured rate to ~2.5%. See
   [`ml-service/REPORT.md`](ml-service/REPORT.md) for the full findings. The prediction itself
   is still non-diagnostic regardless of accuracy — this is a thesis project, not a medical device.
 - **The RabbitMQ reconciliation/polling safety-net job is not implemented.** The primary path

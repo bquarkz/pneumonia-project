@@ -1,7 +1,7 @@
 # ml-service/lab/README.md.
-model_version: '4'
-trained_from_commit: 74d6662
-dataset_version: '4'
+model_version: '5'
+trained_from_commit: f09f602
+dataset_version: '5'
 metrics:
   auc: 0.9574
   recall: 0.9949
@@ -12,4 +12,4 @@ ood:
   k_neighbors: 10
   knn_distance_threshold: 18.6
   knn_distance_threshold_pretrained: 27.9
-promoted_at: '2026-09-08T17:12:59Z'
+promoted_at: '2026-09-21T12:22:47Z'

@@ -43,5 +43,5 @@ winner. Trains or fits nothing; the actual promotion steps live in `lab/README.m
 ## Current result
 
 ResNet18 (04) is the intended production model. As of the last run, on the shared 624-image
-`test` split: ResNet18 ROC-AUC 0.9422 vs. M6's 0.8040 vs. M4's 0.7679 — a decisive margin,
+`test` split: ResNet18 ROC-AUC 0.9574 vs. M6's 0.8040 vs. M4's 0.7679 — a decisive margin,
 detailed in 05's Conclusion.

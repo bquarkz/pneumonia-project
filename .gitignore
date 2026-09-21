@@ -54,3 +54,9 @@ ml-service/app/model/artifacts/*
 # OS
 .DS_Store
 Thumbs.db
+
+IA
+**/debug/**
+**/debug
+**/.claude/**
+**/.claude

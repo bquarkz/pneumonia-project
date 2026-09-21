@@ -18,10 +18,13 @@ Pneumonia prediction service via X-ray (FastAPI).
 
 A fine-tuned ResNet18 is promoted (`app/model/manifest.yaml`: model_version `4`, ROC-AUC 0.9574,
 Recall 0.9949, Precision 0.8033 on held-out test data). `POST /predict` runs uploads through an
-out-of-distribution guardrail first — a grayscale check plus a k-NN embedding-distance check —
-and rejects anything that doesn't look like a chest X-ray with a 422 before it ever reaches the
-model. See [`REPORT.md`](REPORT.md) for the full build narrative, including the guardrail's known
-gaps (a small false-rejection rate on real X-rays, solid-color images slipping through).
+out-of-distribution guardrail first — a grayscale check, a k-NN embedding-distance check in the
+fine-tuned model's own feature space, and a second k-NN embedding-distance check in a separate,
+frozen pretrained embedding (added specifically to catch wrong-anatomical-region X-rays, e.g. an
+abdomen scan, that the fine-tuned embedding alone lets through) — and rejects anything that
+doesn't look like a chest X-ray with a 422 before it ever reaches the model. See
+[`REPORT.md`](REPORT.md) for the full build narrative, including the guardrail's known gap (a
+small, ~2.5% combined false-rejection rate on real X-rays).
 
 If no model has been promoted yet (`manifest.yaml` has `model_version: null`), the service falls
 back to a deterministic pseudo-random prediction (hash of the image) so the full pipeline (upload
