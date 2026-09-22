@@ -16,7 +16,7 @@ Pneumonia prediction service via X-ray (FastAPI).
 
 ## Current state
 
-A fine-tuned ResNet18 is promoted (`app/model/manifest.yaml`: model_version `4`, ROC-AUC 0.9574,
+A fine-tuned ResNet18 is promoted (`app/model/manifest.yaml`: model_version `5`, ROC-AUC 0.9574,
 Recall 0.9949, Precision 0.8033 on held-out test data). `POST /predict` runs uploads through an
 out-of-distribution guardrail first — a grayscale check, a k-NN embedding-distance check in the
 fine-tuned model's own feature space, and a second k-NN embedding-distance check in a separate,
@@ -34,6 +34,17 @@ whatsoever — see `app/model/inference.py`'s `_fallback_predict`.
 Training/promoting a new model is documented in `lab/README.md`'s "Promoting a model" section;
 `app/model/inference.py` loads whatever is promoted automatically on startup — no code change
 needed beyond placing the `.onnx` file and filling in the manifest.
+
+## Model versioning
+
+Model artefacts (`app/model/artifacts/model.onnx`, `ood_embedding.onnx`, both committed to git)
+keep fixed, generic filenames rather than a version suffix like `model_v5.onnx`. Versioning
+instead lives in `app/model/manifest.yaml`, which `promote.py` writes and `inference.py` reads
+on startup: `model_version`, `dataset_version`, the exact `trained_from_commit` the artefacts
+were built from, the promotion `metrics` (AUC/Recall/Precision), the OOD thresholds, and a
+`promoted_at` timestamp. This keeps the served files and their provenance in one auditable
+place instead of relying on a filename to track history — the manifest, not the filename, is
+the source of truth for which model version is running.
 
 ## Running in isolation (without the rest of the stack)
 

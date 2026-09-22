@@ -31,6 +31,8 @@ ml-service/lab/data/*
 !ml-service/lab/data/features/
 ml-service/lab/artifacts/*
 !ml-service/lab/artifacts/.gitkeep
+!ml-service/lab/artifacts/predictions/
+!ml-service/lab/artifacts/predictions/*.csv
 ml-service/app/model/artifacts/*
 !ml-service/app/model/artifacts/.gitkeep
 
